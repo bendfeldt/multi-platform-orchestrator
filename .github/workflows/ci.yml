@@ -1,0 +1,21 @@
+name: ci
+
+on:
+  pull_request:
+  workflow_call:
+
+# Pull requests never get a cloud login: all tests run against mocked providers.
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - run: |
+          scripts/install-tools.sh
+          echo "$HOME/.local/bin" >>"$GITHUB_PATH"
+      - run: scripts/ci.sh

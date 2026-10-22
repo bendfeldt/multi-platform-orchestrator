@@ -1,0 +1,19 @@
+# Same checks as .github/workflows/ci.yml. No service connection: no cloud login.
+trigger: none
+
+pr:
+  branches:
+    include: [main]
+
+pool:
+  vmImage: ubuntu-24.04
+
+steps:
+  - checkout: self
+    persistCredentials: false
+  - script: |
+      scripts/install-tools.sh
+      echo "##vso[task.prependpath]$HOME/.local/bin"
+    displayName: Install tools
+  - script: scripts/ci.sh
+    displayName: Checks

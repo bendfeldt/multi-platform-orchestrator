@@ -1,0 +1,18 @@
+# Domain example_sales in test. The file name must equal the code location's name in the
+# solution repo. Terraform creates the domain's identity and exactly these grants.
+# access: read | write. IDs are examples; they differ per environment.
+databricks:
+  schemas:
+    - name: sales_test.silver   # catalog.schema
+      access: write
+fabric:
+  workspaces:
+    - id: 00000000-0000-0000-0000-000000000002
+      access: write
+snowflake:
+  warehouse: SALES_WH_TEST
+  schemas:
+    - name: SALES_TEST.MART
+      access: write
+    - name: SALES_TEST.EXT
+      access: read

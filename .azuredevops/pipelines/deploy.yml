@@ -1,0 +1,47 @@
+# Same flow as .github/workflows/deploy.yml. Per environment: an Azure Resource Manager service
+# connection mpo-infra-<env> using workload identity federation, and an ADO environment
+# mpo-infra-<env> with approvals on test and prod.
+trigger:
+  branches:
+    include: [main]
+
+pr: none
+
+pool:
+  vmImage: ubuntu-24.04
+
+stages:
+  - stage: ci
+    jobs:
+      - job: check
+        steps:
+          - checkout: self
+            persistCredentials: false
+          - script: |
+              scripts/install-tools.sh
+              echo "##vso[task.prependpath]$HOME/.local/bin"
+            displayName: Install tools
+          - script: scripts/ci.sh
+            displayName: Checks
+
+  - ${{ each env in split('dev,test,prod', ',') }}:
+      - stage: ${{ env }}
+        jobs:
+          - deployment: apply
+            environment: mpo-infra-${{ env }}
+            strategy:
+              runOnce:
+                deploy:
+                  steps:
+                    - checkout: self
+                      persistCredentials: false
+                    - script: |
+                        scripts/install-tools.sh
+                        echo "##vso[task.prependpath]$HOME/.local/bin"
+                      displayName: Install tools
+                    - task: AzureCLI@2
+                      inputs:
+                        azureSubscription: mpo-infra-${{ env }}
+                        scriptType: bash
+                        scriptLocation: inlineScript
+                        inlineScript: scripts/apply.sh ${{ env }}
