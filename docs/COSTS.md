@@ -39,7 +39,7 @@ These changes to the plan keep the bill low without weakening security:
 | Instead of | Use | Saving / env |
 |---|---|---|
 | Private endpoint for PostgreSQL | **VNet integration** (delegated subnet, private access only) | ≈ $7 |
-| Private endpoints for Storage, Azure SQL | **Service endpoints + resource firewall** limited to the ACA subnet, public access otherwise denied | ≈ $15 |
+| Private endpoint for Storage | **Service endpoint + resource firewall** limited to the ACA subnet, public access otherwise denied | ≈ $7 |
 | Key Vault | **None** — no secrets exist | ≈ $1 |
 | ACR Premium (needed for private endpoint) | **ACR Basic**, admin user off, Entra-only pull/push, no anonymous pull | ≈ $45 |
 | Webservers always on | **Scale to zero** (a few seconds' cold start on first visit) | ≈ $10–24 |

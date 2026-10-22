@@ -1,12 +1,12 @@
 # Multi-Platform Orchestrator — Implementation Plan
 
-Status: **DRAFT v7 for review**. Nothing is implemented yet. All findings of
+Status: **DRAFT v8 for review**. Nothing is implemented yet. All findings of
 [PLAN_REVIEW.md](PLAN_REVIEW.md) are applied (marked *R1*–*R16* below).
 
 ## 1. Goal
 
 One Dagster deployment in Azure that orchestrates data assets on Databricks, Microsoft Fabric,
-Snowflake and Azure SQL (later ADLS, ADF and others), with dbt for transformations, and with
+and Snowflake (later Azure SQL, ADLS, ADF and others), with dbt for transformations, and with
 **lineage across all of them** forming a single asset graph (DAG).
 
 Hard requirements:
@@ -31,6 +31,7 @@ Design principle: **Dagster orchestrates, the platforms compute.**
 | 1 | Podman for building and running containers (OCI images, `Containerfile`). |
 | 2 | Terraform for infrastructure. |
 | 3 | On-prem out of scope for now. |
+| 3a | **Azure SQL out of scope for now**; can be added later as its own resource, component and access module. |
 | 4 | Fabric: any item with a job type; first-class pipelines, notebooks, semantic models. |
 | 5 | dbt in scope. |
 | 6 | Environments dev, test, prod. |
@@ -59,7 +60,7 @@ Design principle: **Dagster orchestrates, the platforms compute.**
                  └───┬──────────────┬──────────────┬─────────────────────────────┘
                      │ Entra token  │ service endpoints   │ public APIs, Entra auth
           PostgreSQL Flexible     Storage (compute logs)     Databricks · Fabric ·
-          (VNet-integrated,                                  Snowflake · Azure SQL
+          (VNet-integrated,                                  Snowflake
            Entra-only auth)
 ```
 
@@ -168,7 +169,7 @@ via RBAC by the app deployer):
 
 - **Infra**: small Terraform modules (`network`, `aca_env`, `frontdoor`, `postgres`, `acr`,
   `storage`, `monitoring`, `entra`, `identity`, `policy`, `access_databricks`,
-  `access_snowflake`, `access_fabric`, `access_azure_sql`, `contract`). Each domain is declared
+  `access_snowflake`, `access_fabric`, `contract`). Each domain is declared
   once in a `domains/<name>.yaml` file (which platforms, catalogs/schemas/workspaces, read vs
   write); Terraform derives the identity and every grant from it. Adding a domain = one YAML
   file.
@@ -193,7 +194,6 @@ Every asset key identifies the **data object**, not the job that produces it:
 | Snowflake | `snowflake/<database>/<schema>/<table>` |
 | Fabric Lakehouse / Warehouse | `fabric/<workspace>/<item>/<schema>/<table>` |
 | Fabric semantic model | `fabric/<workspace>/semantic_model/<name>` |
-| Azure SQL | `azuresql/<server>/<database>/<schema>/<table>` |
 
 One function in `orchestrator_core` builds these keys; every component uses it, so two
 components describing the same table produce the same key and connect automatically.
@@ -203,7 +203,7 @@ components describing the same table produce the same key and connect automatica
 | Source | How |
 |---|---|
 | **dbt** (all adapters) | `manifest.json` gives model → model deps automatically. dbt `sources` point to upstream assets on other platforms with dagster-dbt's native `meta.dagster.asset_key` on the source — this is the main glue between platforms, no extra code |
-| **Fabric items, Databricks jobs, Snowflake SQL, Azure SQL procedures** | Declared in the component YAML: `reads:` / `writes:` with canonical keys. When the same data is visible on two platforms (OneLake shortcut, external table), the reader declares the writer's key directly |
+| **Fabric items, Databricks jobs, Snowflake SQL** | Declared in the component YAML: `reads:` / `writes:` with canonical keys. When the same data is visible on two platforms (OneLake shortcut, external table), the reader declares the writer's key directly |
 | Tables loaded by systems outside Dagster | External assets (observed, not materialized) with observation sensors |
 
 Declared lineage drives scheduling, reviewed in pull requests like any other code.
@@ -352,7 +352,6 @@ fetched per connection/request, never once per run.
 |---|---|---|---|
 | Databricks | `dagster-databricks` (Jobs + Pipes) | UAMI as Databricks SP, Entra token | Workspace user; `CAN_MANAGE_RUN` on specific jobs; UC grants on specific schemas |
 | Snowflake | `dagster-snowflake` | Workload Identity Federation (`WORKLOAD_IDENTITY`, AZURE); fallback External OAuth | Role per domain; one warehouse; schema-level grants |
-| Azure SQL | Custom (pyodbc, ODBC 18) | Entra access token; Entra-only server | Contained user + schema-level roles. Terraform generates the `CREATE USER … FROM EXTERNAL PROVIDER` / `GRANT` script per domain; the server's Entra admin applies it, so the orchestrator never holds SQL admin rights |
 | Fabric | Custom (§7.1) | Entra tokens for Fabric API and Power BI API | SP tenant setting limited to a group; workspace role per workspace |
 | ADLS / Blob | `dagster-azure` | MI | Data role on a specific container |
 
@@ -387,9 +386,9 @@ multi-platform-orchestrator/
 │       ├── auth.py               # AzureCredentialResource
 │       ├── contract.py           # load + validate environment contract
 │       ├── asset_keys.py         # canonical keys
-│       ├── resources/            # databricks, fabric, snowflake, azure_sql, adls
+│       ├── resources/            # databricks, fabric, snowflake, adls
 │       ├── components/           # FabricItemJob, FabricSemanticModelRefresh, DatabricksJob,
-│       │                         # SnowflakeSql, AzureSqlProcedure
+│       │                         # SnowflakeSql
 │       ├── admin/                # migrate (principals + dagster instance migrate), cleanup
 │       └── dbt/                  # translator, token → env helpers
 ├── code_locations/
@@ -474,7 +473,7 @@ The code lives on GitHub. Deployment can run from **GitHub Actions or Azure DevO
   Azure DevOps.
 
 **Phase 2 — Connectors, components and lineage**
-- Azure SQL → Snowflake → Databricks (Pipes) → Fabric (`FabricItemJob`,
+- Snowflake → Databricks (Pipes) → Fabric (`FabricItemJob`,
   `FabricSemanticModelRefresh`) → dbt (translator, source `asset_key` meta) → ADLS. Unit tests
   with mocked APIs; opt-in integration tests against dev.
 
