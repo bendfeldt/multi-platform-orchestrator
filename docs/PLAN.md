@@ -1,6 +1,6 @@
 # Multi-Platform Orchestrator — Implementation Plan
 
-Status: **DRAFT v3 for review**. Nothing is implemented yet.
+Status: **DRAFT v4 for review**. Nothing is implemented yet.
 
 ## 1. Goal
 
@@ -16,7 +16,8 @@ Hard requirements:
   plane cannot read business data.
 - **Separation of concerns**: infrastructure and solution are separate, independently versioned
   and deployed (§3).
-- **Deployable from GitHub Actions or Azure DevOps Pipelines**, both secretless (§9).
+- **Deployed from GitHub Actions**, secretless (§9).
+- **Cost-conscious**: no fixed-price components that are not essential (§6.3).
 - **Runs locally (Podman) and in Azure** from the same container images.
 
 Design principle: **Dagster orchestrates, the platforms compute.**
@@ -34,19 +35,20 @@ Design principle: **Dagster orchestrates, the platforms compute.**
 | 7 | UI reachable from the internet behind Entra ID OAuth. |
 | 8 | Hosting: **Azure Container Apps** (confirmed). |
 | 9 | Subscription layout: **both** supported — one subscription per environment, or one shared subscription with a resource group per environment. |
-| 10 | Azure region: **setup input**, optional with a default. |
+| 10 | Azure region: **setup input**, optional, default `westeurope`. |
 | 11 | Snowflake: Business Critical (PrivateLink available); one account per environment assumed. |
 | 12 | Databricks and Fabric workspaces **already exist** — Terraform only references them and manages identities/grants. |
-| 13 | Ingress: Front Door Premium + WAF + Private Link (§6.2) — best security at reasonable cost. |
-| 14 | CI/CD: GitHub Actions **and** Azure DevOps, same scripts underneath. |
+| 13 | Ingress: Container Apps ingress + built-in Entra auth, hardened (§6.2). No Front Door — too expensive. Front Door Premium stays an optional switch. |
+| 14 | Both repositories live on **GitHub**; CI/CD is GitHub Actions only. |
 
 ## 2. Architecture
 
 ```
-  Users (internet) ──► Azure Front Door Premium + WAF ──► Private Link
+  Users (internet) ──► HTTPS, Entra sign-in enforced by Container Apps before any request
+                      reaches Dagster (only the two webserver apps are public)
                                                              │
                  ┌───────────────────────────────────────────▼───────────────────┐
-  Azure VNet     │  Azure Container Apps environment (internal, VNet-integrated)  │
+  Azure VNet     │  Azure Container Apps environment (VNet-integrated)            │
   (per env)      │  dagster-webserver (full)       ← Entra OAuth, group Operators  │
                  │  dagster-webserver --read-only  ← Entra OAuth, group Viewers    │
                  │  dagster-daemon (schedules, sensors, run queue)                │
@@ -73,7 +75,7 @@ them. Neither imports code from the other.
 | | `multi-platform-orchestrator-infra` (new repo) | `multi-platform-orchestrator` (this repo) |
 |---|---|---|
 | Contains | Terraform only | Python, Dagster definitions, Containerfiles, app deployment, local Podman stack |
-| Owns | Network, ACA environment, Postgres, ACR, storage, Front Door/WAF, monitoring, Entra groups & app registrations, managed identities, federated credentials, **platform grants** (Unity Catalog, Snowflake roles, Fabric workspace roles) | Core library, components, code locations, dbt projects, images, container app + job definitions, Dagster instance config |
+| Owns | Network, ACA environment, Postgres, ACR, storage, ingress/auth, monitoring, Entra groups & app registrations, managed identities, federated credentials, **platform grants** (Unity Catalog, Snowflake roles, Fabric workspace roles) | Core library, components, code locations, dbt projects, images, container app + job definitions, Dagster instance config |
 | Deploy identity | `infra-deployer-<env>`: rights to create resources and role assignments (powerful, rarely used, approval-gated) | `app-deployer-<env>`: push to ACR + update container apps in one RG. Cannot change networking, identities or grants |
 | Changes when | New environment, new domain (identity + grants), platform change | Code, assets, schedules, dbt models |
 | Release cadence | Slow, reviewed by platform/security | Fast, reviewed by data engineers |
@@ -116,7 +118,7 @@ The infra pipeline publishes a **non-secret environment contract** per environme
 
 ### 3.2 Modularity inside each repo
 
-- **Infra**: small Terraform modules (`network`, `aca_env`, `frontdoor`, `postgres`, `acr`,
+- **Infra**: small Terraform modules (`network`, `aca_env`, `ingress`, `postgres`, `acr`,
   `storage`, `monitoring`, `entra`, `identity`, `access_databricks`, `access_snowflake`,
   `access_fabric`, `access_azure_sql`, `contract`). Each domain is declared once in a
   `domains/<name>.yaml` file (which platforms, catalogs/schemas/workspaces, read vs write);
@@ -198,8 +200,8 @@ endpoint so governance tools see the same lineage. Not required for the DAG itse
 | `id-dagster-platform-<env>` | UAMI | Metadata Postgres, create/start ACA Jobs in its RG (custom role), ACR pull, compute-log container | Any data platform |
 | `id-dagster-web-<env>` | UAMI | Metadata Postgres, ACR pull | Data platforms, ACA Jobs |
 | `id-cl-<domain>-<env>` | UAMI | Only that domain's objects (from `domains/<name>.yaml`) | Other domains |
-| `infra-deployer-<env>` | Entra app, federated credential (GitHub **and/or** ADO) | Terraform apply for that env | Other environments |
-| `app-deployer-<env>` | Entra app, federated credential (GitHub **and/or** ADO) | ACR push, container app/job updates in that env's RG, read contract | Network, identities, grants, other envs |
+| `infra-deployer-<env>` | Entra app, GitHub OIDC federated credential | Terraform apply for that env | Other environments |
+| `app-deployer-<env>` | Entra app, GitHub OIDC federated credential | ACR push, container app/job updates in that env's RG, read contract | Network, identities, grants, other envs |
 
 - Run workers inherit their code location's identity; `sales` runs cannot touch `finance`.
 - Platform permissions are granted to Entra security groups containing the UAMIs.
@@ -221,39 +223,74 @@ A `setup` script in the infra repo asks for (or reads from a `setup.yaml`) and w
 
 - tenant ID, subscription ID per env (or one shared), resource-group names
 - **location** — optional, default `westeurope`
-- naming prefix, CI provider(s) (`github`, `ado`, or both) and their repo/project identifiers
+- naming prefix, GitHub org/repo names (for the federated credentials)
+- `ingress_mode` (`easyauth` default, `frontdoor_premium` optional) and optional IP allowlist
 - existing Databricks workspace URLs, Snowflake account per env, Fabric workspace IDs
 - Entra group object IDs for Viewers / Operators (or create them)
 
 It then bootstraps Terraform state storage (Entra auth, no keys) and the deployer identities with
 their federated credentials. Bootstrap is the only step run by a human with elevated rights.
 
-## 6. Networking and ingress
+## 6. Networking, ingress and cost
 
 ### 6.1 Private by default
 
-Internal ACA environment; private endpoints + private DNS for Postgres, ACR, storage, Key Vault,
-Azure SQL, Databricks (Private Link) and Snowflake (PrivateLink). Fabric: workspace private links
-where available. Egress via NAT Gateway (Azure Firewall optional for strict allowlisting).
+- VNet-integrated ACA environment (workload profiles, Consumption profile).
+- **Only the two webserver apps have external ingress.** Daemon and code-location servers have
+  internal-only ingress (reachable inside the environment only); run jobs have no ingress.
+- Postgres, ACR, storage and Azure SQL reached over private endpoints with public network
+  access disabled. Databricks and Snowflake over Private Link / PrivateLink.
+- Egress via the ACA environment's default outbound; NAT Gateway optional
+  (`nat_gateway_enabled`), needed only if a platform must allowlist a fixed egress IP.
 
-### 6.2 Internet ingress — chosen option
+### 6.2 Internet ingress — chosen option (no extra fixed cost)
 
-**Azure Front Door Premium + WAF + Private Link to the internal ACA environment**, Entra
-OAuth on the apps (Container Apps built-in auth), user assignment required, Conditional Access.
+Container Apps ingress with **built-in authentication (Easy Auth) using Entra ID**. Requests
+without a valid Entra session are rejected by the Container Apps platform before they reach the
+Dagster container. Hardening:
 
-Why this one:
+- **Two Entra app registrations per environment**: `mpo-ui-<env>` (full webserver) and
+  `mpo-ui-ro-<env>` (read-only webserver). Each enterprise app has **user assignment required**:
+  only `Dagster-Operators` is assigned to the full app; `Dagster-Viewers` and `Dagster-Operators`
+  to the read-only app. Easy Auth additionally checks allowed groups. So a viewer cannot
+  even sign in to the full webserver.
+- **Conditional Access** on both apps: MFA, compliant/hybrid-joined device, block risky sign-ins.
+- HTTPS only, custom domain with managed certificate, `unauthenticatedClientAction = RedirectToLoginPage`,
+  no anonymous paths.
+- Optional **IP allowlist** on the webserver ingress (e.g. office/VPN ranges) as a setup input.
+- The full webserver can be scaled to zero / disabled in test and prod when not needed, leaving
+  only the read-only UI exposed.
+- Dagster's own surface: read-only webserver for most users, no secrets in the UI (there are none).
+
+Accepted trade-off: **no WAF / bot protection / custom rate limiting**. The public surface is the
+Microsoft-managed auth layer and Entra sign-in, not Dagster itself, which keeps this risk low for
+an internal tool with a small, assigned user base.
 
 | Option | Security | Rough fixed cost / month* |
 |---|---|---|
-| External ACA ingress + Entra auth only | No WAF, public endpoint on the environment | ~0 |
-| Application Gateway WAF_v2 in VNet | WAF, private backend; regional, you manage capacity | ~$250–350 per env |
-| **Front Door Premium + WAF + Private Link** | WAF with managed rule sets + bot protection, global DDoS absorption, **no public endpoint on the backend at all** | ~$330 per profile |
+| **ACA ingress + Easy Auth (Entra), hardened as above** — default | Entra-gated, CA, assignment, optional IP allowlist; no WAF | **~$0** |
+| Front Door Standard + ACA | Adds custom WAF rules/rate limits, but the ACA origin stays public and can't be locked to Front Door without app-level header checks | ~$35 + traffic |
+| Application Gateway WAF_v2 | Full WAF, private backend | ~$250–350 per env |
+| Front Door Premium + Private Link (`ingress_mode = frontdoor_premium`) | Managed WAF rules, private backend | ~$330 per profile |
 
-\* list-price ballpark, verify for your region and agreement.
+\* list-price ballpark; verify for your region and agreement.
 
-Cost control: **one Front Door profile for dev + test** (separate endpoints, routes and WAF
-policies per env) and **a dedicated profile for prod**. This is a Terraform input
-(`frontdoor_mode = shared_nonprod | per_env`), so it can be one profile per env if preferred.
+Front Door Premium is kept as an optional Terraform switch for later, not built in the first pass.
+
+### 6.3 Cost baseline (per environment, rough list price)
+
+| Component | Choice | ≈ / month |
+|---|---|---|
+| Container Apps | Consumption profile; webserver ×2, daemon, 1 code location always on at 0.25–0.5 vCPU; run jobs billed per second | $20–60 |
+| PostgreSQL Flexible | Burstable B1ms (dev/test), B2s (prod), 32 GB | $15–35 |
+| Private endpoints | ~4 (Postgres, ACR, storage, Azure SQL) | ~$30 |
+| ACR | Basic in dev/test, Standard in prod (or one shared registry) | $5–20 |
+| Storage, Log Analytics | Logs with short retention, sampling | $5–20 |
+| Ingress / auth | Easy Auth | $0 |
+
+Cost switches as Terraform inputs: `private_endpoints_enabled` (off in dev → public access
+restricted to the ACA environment's outbound IP instead), shared ACR across environments,
+log retention days, Postgres SKU, scale-to-zero for the full webserver.
 
 ## 7. Platform connectors
 
@@ -312,31 +349,29 @@ multi-platform-orchestrator/
 │   └── scripts/                  # build.sh, push.sh, deploy.sh — called by both CI systems
 ├── local/compose.yaml            # podman compose stack
 ├── .github/workflows/            # thin wrappers around deploy/scripts
-├── .azuredevops/pipelines/       # thin wrappers around deploy/scripts (+ templates)
 └── docs/
 ```
 
 The infra repo mirrors this: `modules/`, `envs/{dev,test,prod}/`, `domains/*.yaml`,
-`scripts/` (setup, plan, apply, publish-contract), `.github/workflows/`, `.azuredevops/pipelines/`.
+`scripts/` (setup, plan, apply, publish-contract), `.github/workflows/`.
 
-## 9. CI/CD: GitHub and Azure DevOps
+## 9. CI/CD: GitHub Actions
 
-- **All logic lives in scripts** (`deploy/scripts/*.sh` in the solution repo, `scripts/*.sh` in
-  infra). GitHub workflows and ADO pipelines are thin wrappers that set up tools, log in, and
-  call the same scripts — no logic duplicated in YAML.
-- **Secretless login on both**:
-  - GitHub Actions → Entra federated credential, subject
-    `repo:<org>/<repo>:environment:<env>`.
-  - Azure DevOps → service connection using **workload identity federation**, issuer
-    `https://vstoken.dev.azure.com/<org-id>`, subject `sc://<org>/<project>/<connection>`.
-  - The infra setup creates federated credentials for whichever CI providers are selected.
-- **Approvals**: GitHub environments with required reviewers ↔ ADO environments with approvals
-  and checks. Dev auto-deploys; test and prod require approval.
-- **Promotion**: the solution builds the image once (`podman build`), scans it, pushes to the
-  dev ACR, and promotes the **same digest** to test/prod (`az acr import`).
-- Pipelines per repo:
-  - infra: `validate` (fmt, validate, tflint, checkov/trivy) on PR → `plan` on PR →
-    `apply` + `publish-contract` per env with approval.
+- Logic lives in scripts (`deploy/scripts/*.sh`, infra `scripts/*.sh`) so it can be run and
+  tested locally; workflows are thin wrappers.
+- **Secretless**: Entra federated credentials for GitHub OIDC, subject
+  `repo:<org>/<repo>:environment:<env>`, one deployer app per repo per environment. No client
+  secrets, no storage keys.
+- **GitHub environments** `dev`, `test`, `prod`: dev deploys on merge to `main`; test and prod
+  require reviewers. Environment-scoped variables hold only non-secret IDs.
+- **Promotion**: build once with Podman, scan (Trivy), push to the dev ACR, promote the **same
+  digest** to test/prod (`az acr import`). Images pinned by digest in deployments.
+- Workflow hardening: actions pinned by SHA, `permissions:` minimal per job (`id-token: write`
+  only where Azure login is needed), Dependabot for actions and Python, CODEOWNERS on
+  `deploy/`, `.github/` and the infra repo.
+- Pipelines:
+  - infra: `validate` (fmt, validate, tflint, checkov/trivy) and `plan` on PR (plan posted as a
+    comment) → `apply` + `publish-contract` per env with approval.
   - solution: `ci` (ruff, pyright, pytest, `dg check`, lineage drift vs dev) on PR →
     `build` → `deploy` per env with approval.
 
@@ -347,13 +382,13 @@ The infra repo mirrors this: `modules/`, `envs/{dev,test,prod}/`, `domains/*.yam
 - B: Snowflake WIF from an ACA Job MI.
 - C: Fabric pipeline/notebook run + semantic model refresh with an MI.
 - D: dbt adapters with MI tokens.
-- E: Front Door Premium → Private Link → internal ACA + Easy Auth.
+- E: ACA Easy Auth with two Entra apps, assignment + allowed groups, custom domain.
 - F: Lineage discovery feasibility per platform with domain-scoped (not admin) rights.
 
 **Phase 1 — Solution skeleton (this repo)**
 - uv workspace, lint/type/test, contract schema + loader, `AzureCredentialResource`,
   canonical asset-key module, example code location, Containerfiles, Podman stack,
-  CI for GitHub and ADO (ci only).
+  GitHub Actions CI.
 
 **Phase 2 — Connectors and components**
 - Azure SQL → Snowflake → Databricks (Pipes) → Fabric (pipeline, notebook, semantic model,
@@ -364,10 +399,10 @@ The infra repo mirrors this: `modules/`, `envs/{dev,test,prod}/`, `domains/*.yam
 
 **Phase 4 — Infra repo**
 - Setup/bootstrap, modules, domain YAML → identities + grants, contract publishing,
-  GitHub + ADO pipelines. Dev first, then test and prod.
+  GitHub Actions workflows. Dev first, then test and prod.
 
 **Phase 5 — App deployment**
-- Contract-driven ACA templates, deploy scripts, image promotion, GitHub + ADO pipelines.
+- Contract-driven ACA templates, deploy scripts, image promotion, GitHub Actions workflows.
 
 **Phase 6 — End-to-end example** (§4.3) in dev, with checks and alerts.
 
@@ -382,15 +417,13 @@ Phases 1–3 need no Azure access and can start immediately.
 |---|---|
 | ACA run launcher is new | Spike A; AKS fallback with same images |
 | OSS Dagster has no RBAC | Read-only vs full webserver behind Entra groups; Dagster+ if finer roles needed |
-| UI on the internet | Front Door WAF + Private Link, Entra + Conditional Access, user assignment |
+| UI on the internet without WAF | Easy Auth rejects unauthenticated requests before Dagster; user assignment, allowed groups, Conditional Access, optional IP allowlist; Front Door Premium switch available |
 | Lineage discovery needs broad rights | Declared lineage drives the DAG; discovery is domain-scoped and only validates |
 | Declared lineage drifts from reality | Drift check in CI and as scheduled asset check |
 | Contract drift between repos | JSON Schema validated in both pipelines, `schema_version` |
 | Fabric / Power BI API changes | Thin resource, integration tests against dev |
 | dbt adapter auth differs | Spike D; token-via-env fallback |
-| Two CI systems diverge | All logic in shared scripts; YAML wrappers only |
 
 ## 12. Open items
 
-1. Create the infra repo (suggested name `multi-platform-orchestrator-infra`), on GitHub or ADO.
-2. Default region if none is given at setup (`westeurope` proposed).
+1. Create the GitHub repo `bendfeldt/multi-platform-orchestrator-infra`.
