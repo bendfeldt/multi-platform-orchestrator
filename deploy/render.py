@@ -52,7 +52,6 @@ def _platform_env(contract: Contract, domain: str) -> dict[str, str]:
         snowflake = platforms.snowflake.domains[domain]
         env |= {
             "SNOWFLAKE_ACCOUNT": platforms.snowflake.account,
-            "SNOWFLAKE_OAUTH_SCOPE": platforms.snowflake.oauth_scope,
             "SNOWFLAKE_ROLE": snowflake.role,
             "SNOWFLAKE_WAREHOUSE": snowflake.warehouse,
         }

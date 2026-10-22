@@ -161,8 +161,7 @@ via RBAC by the app deployer):
   "ingress": { "full_hostname": "…", "readonly_hostname": "…" },
   "platforms": {
     "databricks": { "host": "…" },
-    "snowflake": { "account": "…" },
-    "fabric": { "workspaces": { "sales": "…" } }
+    "snowflake": { "account": "…", "domains": { "sales": { "role": "…", "warehouse": "…" } } }
   }
 }
 ```
@@ -358,7 +357,7 @@ fetched per connection/request, never once per run.
 | Platform | Integration | Auth | Grants (in infra repo) |
 |---|---|---|---|
 | Databricks | `databricks-sdk`: run existing jobs, wait, cancel (Pipes later, when jobs should stream logs to Dagster) | UAMI as Databricks SP, Entra token per request | Workspace user; `CAN_MANAGE_RUN` on specific jobs; UC grants on specific schemas |
-| Snowflake | `snowflake-connector-python` | **External OAuth with Entra tokens** — the same token path works for managed identities in Azure and for `az login` locally. Workload Identity Federation stays an option (Spike B) | Role per domain; one warehouse; schema-level grants |
+| Snowflake | `snowflake-connector-python` | **Workload identity federation**: the connector gets an Entra token for the container's managed identity, and each domain's Snowflake service user trusts exactly that identity. No Entra app or OAuth integration needed. Locally: browser SSO with your own login | Role per domain; one warehouse; schema-level grants |
 | Fabric | Custom (§7.1) | Entra tokens for Fabric API and Power BI API | SP tenant setting limited to a group; workspace role per workspace |
 
 ### 7.1 Fabric (*R13*)
@@ -467,8 +466,8 @@ The code lives on GitHub. Deployment can run from **GitHub Actions or Azure DevO
   Postgres login (verified locally: runs work without DDL rights, DDL is refused), the cleanup
   job, gRPC from webserver/daemon to `cl-<domain>` on port 80 (HTTP/2), and launch time per run
   (fallback AKS).
-- B: Snowflake External OAuth with a managed-identity token (user mapping by `sub`), and WIF as
-  the alternative.
+- B: Snowflake workload identity federation from an ACA Job's managed identity (the connector
+  supports Container Apps' `IDENTITY_ENDPOINT`).
 - C: Fabric pipeline/notebook run + semantic model refresh with an MI.
 - D: dbt adapters with MI tokens.
 - E: Front Door Premium → Private Link → internal ACA environment, Easy Auth with two Entra

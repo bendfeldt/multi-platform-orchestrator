@@ -55,19 +55,12 @@ class SnowflakeDomain(BaseModel):
 
 class Snowflake(BaseModel):
     account: str
-    # Application ID URI scope of the Entra app trusted by Snowflake External OAuth.
-    oauth_scope: str
     domains: dict[str, SnowflakeDomain]
-
-
-class Fabric(BaseModel):
-    workspaces: dict[str, str]
 
 
 class Platforms(BaseModel):
     databricks: Databricks | None = None
     snowflake: Snowflake | None = None
-    fabric: Fabric | None = None
 
 
 class Contract(BaseModel):

@@ -16,7 +16,7 @@ REFRESH = f"{POWER_BI_API}/groups/ws/datasets/ds/refreshes/req-1"
 
 @pytest.fixture(autouse=True)
 def fake_token(monkeypatch):
-    for module in (fabric, databricks, snowflake):
+    for module in (fabric, databricks):
         monkeypatch.setattr(module, "get_token", lambda scope: "token")
     monkeypatch.setattr(_wait.time, "sleep", lambda seconds: None)
 
@@ -115,8 +115,18 @@ def test_databricks_job_result(monkeypatch, result):
             resource.run_job(1)
 
 
-def test_snowflake_logs_in_with_entra_token(monkeypatch):
+@pytest.mark.parametrize(
+    ("in_azure", "expected"),
+    [
+        (True, {"authenticator": "WORKLOAD_IDENTITY", "workload_identity_provider": "AZURE"}),
+        (False, {"authenticator": "externalbrowser", "user": "me@example.com"}),
+    ],
+)
+def test_snowflake_uses_workload_identity_in_azure(monkeypatch, in_azure, expected):
     seen = {}
+    monkeypatch.delenv("IDENTITY_ENDPOINT", raising=False)
+    if in_azure:
+        monkeypatch.setenv("IDENTITY_ENDPOINT", "http://localhost")
 
     class _Connection:
         def execute_string(self, sql):
@@ -128,12 +138,10 @@ def test_snowflake_logs_in_with_entra_token(monkeypatch):
     monkeypatch.setattr(
         snowflake.snowflake.connector, "connect", lambda **kw: seen.update(kw) or _Connection()
     )
-    resource = SnowflakeResource(
-        account="a", oauth_scope="api://sf/.default", warehouse="w", role="r"
-    )
+    resource = SnowflakeResource(account="a", warehouse="w", role="r", user="me@example.com")
 
     assert resource.execute("select 1; select 2") == ["q1", "q2"]
-    assert seen["authenticator"] == "oauth" and seen["token"] == "token" and seen["closed"]
+    assert expected.items() <= seen.items() and "token" not in seen and seen["closed"]
 
 
 def test_yaml_component_materializes_what_it_writes():

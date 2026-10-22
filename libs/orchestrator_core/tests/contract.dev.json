@@ -26,9 +26,7 @@
     "databricks": { "host": "https://adb-0000000000000000.0.azuredatabricks.net" },
     "snowflake": {
       "account": "myorg-sales-dev",
-      "oauth_scope": "api://snowflake-dev/.default",
       "domains": { "example_sales": { "role": "SALES_RW", "warehouse": "SALES_WH" } }
-    },
-    "fabric": { "workspaces": { "example_sales": "88888888-8888-8888-8888-888888888888" } }
+    }
   }
 }

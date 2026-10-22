@@ -1,6 +1,8 @@
 """Platform resources. Settings come from environment variables the deployment sets from the
 environment contract, so code locations never hard-code hosts or accounts."""
 
+import os
+
 import dagster as dg
 
 from orchestrator_core.resources.databricks import DatabricksResource
@@ -15,9 +17,9 @@ def platform_resources() -> dict[str, dg.ConfigurableResource]:
         "databricks": DatabricksResource(host=dg.EnvVar("DATABRICKS_HOST")),
         "snowflake": SnowflakeResource(
             account=dg.EnvVar("SNOWFLAKE_ACCOUNT"),
-            oauth_scope=dg.EnvVar("SNOWFLAKE_OAUTH_SCOPE"),
             warehouse=dg.EnvVar("SNOWFLAKE_WAREHOUSE"),
             role=dg.EnvVar("SNOWFLAKE_ROLE"),
+            user=os.environ.get("SNOWFLAKE_USER"),  # local development only
         ),
     }
 

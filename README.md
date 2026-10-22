@@ -64,12 +64,14 @@ in-VNet migrate job, then updates code servers, daemon, webservers and the clean
    Each lists the assets it `writes` and the upstream assets it `reads` as
    `platform/...` keys, e.g. `snowflake/sales/mart/fct_orders`. That is the lineage.
 3. dbt: depend on `orchestrator-core[dbt]` plus the adapter, and use
-   `type: orchestrator_core.dbt.CanonicalDbtProject` with `platform:` (and `fabric_workspace:` or
-   `oauth_scope:`). Profiles read the token from `SNOWFLAKE_TOKEN`, `DATABRICKS_TOKEN` or
-   `FABRIC_TOKEN`, always with a default: `{{ env_var('SNOWFLAKE_TOKEN', 'unset') }}`. Sources
-   on another platform set `meta: {dagster: {asset_key: [...]}}`.
+   `type: orchestrator_core.dbt.CanonicalDbtProject` with `platform:` (and `fabric_workspace:`
+   for Fabric). Databricks and Fabric profiles read a token from `DATABRICKS_TOKEN` or
+   `FABRIC_TOKEN`, always with a default: `{{ env_var('DATABRICKS_TOKEN', 'unset') }}`. Snowflake
+   profiles use `authenticator: workload_identity`. Sources on another platform set
+   `meta: {dagster: {asset_key: [...]}}`.
 4. Add it to `deploy/workspace.local.yaml` and `local/compose.yaml`.
 5. In the infra repo, add `domains/<domain>.yaml` for its identity and grants.
 
 Platform settings come from environment variables the deployment sets: `DATABRICKS_HOST`,
-`SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_OAUTH_SCOPE`, `SNOWFLAKE_WAREHOUSE`, `SNOWFLAKE_ROLE`.
+`SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_WAREHOUSE`, `SNOWFLAKE_ROLE`. Locally, also set
+`SNOWFLAKE_USER` to sign in to Snowflake through your browser.

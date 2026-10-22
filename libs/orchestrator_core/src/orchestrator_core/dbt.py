@@ -22,15 +22,14 @@ from orchestrator_core.asset_keys import (
 from orchestrator_core.auth import get_token
 from orchestrator_core.resources.databricks import DATABRICKS_SCOPE
 
-# The env var each dbt profile reads its token from, e.g.
-# `token: "{{ env_var('SNOWFLAKE_TOKEN', 'unset') }}"`. The default keeps `dbt parse` working
-# at image build time, when no token exists.
-TOKEN_ENV = {
-    "snowflake": "SNOWFLAKE_TOKEN",
-    "databricks": "DATABRICKS_TOKEN",
-    "fabric": "FABRIC_TOKEN",
+# The env var each dbt profile reads its Entra token from, e.g.
+# `token: "{{ env_var('DATABRICKS_TOKEN', 'unset') }}"`. The default keeps `dbt parse` working
+# at image build time, when no token exists. Snowflake profiles need no token: they use
+# `authenticator: workload_identity` like SnowflakeResource (Spike D confirms dbt-snowflake).
+TOKEN_SCOPES = {
+    "databricks": ("DATABRICKS_TOKEN", DATABRICKS_SCOPE),
+    "fabric": ("FABRIC_TOKEN", "https://database.windows.net/.default"),
 }
-_FABRIC_SQL_SCOPE = "https://database.windows.net/.default"
 
 
 def canonical_dbt_key(
@@ -52,11 +51,11 @@ def canonical_dbt_key(
 
 
 @contextmanager
-def _token_env(platform: str, oauth_scope: str | None) -> Iterator[None]:
-    scope = {"databricks": DATABRICKS_SCOPE, "fabric": _FABRIC_SQL_SCOPE}.get(platform, oauth_scope)
-    if not scope:
-        raise ValueError("snowflake dbt projects need oauth_scope")
-    name = TOKEN_ENV[platform]
+def _token_env(platform: str) -> Iterator[None]:
+    if platform not in TOKEN_SCOPES:
+        yield
+        return
+    name, scope = TOKEN_SCOPES[platform]
     # dbt runs as a subprocess that inherits os.environ; each Dagster run is its own process.
     # shortcut: one token per dbt invocation (~1 h lifetime); split very long builds.
     os.environ[name] = get_token(scope)
@@ -72,8 +71,6 @@ class CanonicalDbtProject(DbtProjectComponent):
 
     platform: str = "snowflake"
     fabric_workspace: str | None = None
-    # Snowflake only: the External OAuth scope, as on SnowflakeResource.
-    oauth_scope: str | None = None
 
     def get_asset_spec(
         self, manifest: Mapping[str, Any], unique_id: str, project: DbtProject | None
@@ -85,5 +82,5 @@ class CanonicalDbtProject(DbtProjectComponent):
         )
 
     def execute(self, context: dg.AssetExecutionContext, dbt: DbtCliResource) -> Iterator:
-        with _token_env(self.platform, self.oauth_scope):
+        with _token_env(self.platform):
             yield from super().execute(context, dbt)

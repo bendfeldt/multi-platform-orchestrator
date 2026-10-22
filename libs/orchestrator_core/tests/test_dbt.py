@@ -47,7 +47,6 @@ def test_dbt_models_get_canonical_keys_and_cross_platform_deps(tmp_path):
             "attributes:\n"
             f"  project: {project}\n"
             "  platform: snowflake\n"
-            "  oauth_scope: api://snowflake/.default\n"
         )
         with sandbox.load_component_and_build_defs(defs_path=defs_path) as (component, defs):
             assert isinstance(component, CanonicalDbtProject)
@@ -66,8 +65,8 @@ def test_dbt_gets_a_token_only_while_it_runs(monkeypatch):
     from orchestrator_core import dbt
 
     monkeypatch.setattr(dbt, "get_token", lambda scope: f"token-for-{scope}")
-    with dbt._token_env("databricks", None):
+    with dbt._token_env("databricks"):
         assert os.environ["DATABRICKS_TOKEN"].startswith("token-for-2ff814a6")
     assert "DATABRICKS_TOKEN" not in os.environ
-    with pytest.raises(ValueError), dbt._token_env("snowflake", None):
-        pass
+    with dbt._token_env("snowflake"):  # workload identity: nothing to hand over
+        assert "SNOWFLAKE_TOKEN" not in os.environ
