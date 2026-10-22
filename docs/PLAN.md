@@ -1,37 +1,44 @@
 # Multi-Platform Orchestrator — Implementation Plan
 
-Status: **DRAFT v2 for review**. Nothing is implemented yet. Decisions taken are in §1.1.
+Status: **DRAFT v3 for review**. Nothing is implemented yet.
 
 ## 1. Goal
 
 One Dagster deployment in Azure that orchestrates data assets on Databricks, Microsoft Fabric,
-Snowflake and Azure SQL (later ADLS, ADF and others), with dbt for transformations.
+Snowflake and Azure SQL (later ADLS, ADF and others), with dbt for transformations, and with
+**lineage across all of them** forming a single asset graph (DAG).
 
 Hard requirements:
 
 - **Entra ID everywhere**: humans sign in with Entra (OAuth/OIDC); workloads use managed
-  identities / workload identity federation. No stored secrets.
-- **Least privilege**: each workload identity can reach only the systems and objects it needs.
-  The orchestrator control plane cannot read business data.
-- **Runs locally and in Azure** from the same container images.
+  identities / workload identity federation. **No stored secrets.**
+- **Least privilege**: each identity can reach only what it needs. The orchestrator control
+  plane cannot read business data.
+- **Separation of concerns**: infrastructure and solution are separate, independently versioned
+  and deployed (§3).
+- **Deployable from GitHub Actions or Azure DevOps Pipelines**, both secretless (§9).
+- **Runs locally (Podman) and in Azure** from the same container images.
 
-Design principle: **Dagster orchestrates, the platforms compute.** Dagster triggers Databricks
-jobs, Fabric items, Snowflake SQL and dbt, and records lineage, metadata and checks. It does not
-pull large datasets through its own containers.
+Design principle: **Dagster orchestrates, the platforms compute.**
 
 ### 1.1 Decisions
 
 | # | Decision |
 |---|---|
-| 1 | **Podman** for building and running containers. Images are standard OCI (`Containerfile`), so the same images run locally under Podman and in Azure Container Apps. |
-| 2 | **Terraform** for all infrastructure — Azure *and* platform-side grants (Databricks, Snowflake, Fabric). |
-| 3 | **On-prem is out of scope** for now. The connector design leaves room to add it later. |
-| 4 | **Fabric**: support any item with a job type, with first-class support for **pipelines, notebooks and semantic models**. |
-| 5 | **dbt is in scope** (`dagster-dbt`). |
-| 6 | Three environments: **dev, test, prod**. |
-| 7 | UI reachable **from the internet behind Entra ID OAuth**. |
-
-Assumed (confirm): Azure hosting on **Azure Container Apps** (see §2.1).
+| 1 | Podman for building and running containers (OCI images, `Containerfile`). |
+| 2 | Terraform for infrastructure. |
+| 3 | On-prem out of scope for now. |
+| 4 | Fabric: any item with a job type; first-class pipelines, notebooks, semantic models. |
+| 5 | dbt in scope. |
+| 6 | Environments dev, test, prod. |
+| 7 | UI reachable from the internet behind Entra ID OAuth. |
+| 8 | Hosting: **Azure Container Apps** (confirmed). |
+| 9 | Subscription layout: **both** supported — one subscription per environment, or one shared subscription with a resource group per environment. |
+| 10 | Azure region: **setup input**, optional with a default. |
+| 11 | Snowflake: Business Critical (PrivateLink available); one account per environment assumed. |
+| 12 | Databricks and Fabric workspaces **already exist** — Terraform only references them and manages identities/grants. |
+| 13 | Ingress: Front Door Premium + WAF + Private Link (§6.2) — best security at reasonable cost. |
+| 14 | CI/CD: GitHub Actions **and** Azure DevOps, same scripts underneath. |
 
 ## 2. Architecture
 
@@ -40,239 +47,351 @@ Assumed (confirm): Azure hosting on **Azure Container Apps** (see §2.1).
                                                              │
                  ┌───────────────────────────────────────────▼───────────────────┐
   Azure VNet     │  Azure Container Apps environment (internal, VNet-integrated)  │
-  (per env)      │                                                                │
-                 │  dagster-webserver (full)       ← Entra OAuth, group Operators  │
+  (per env)      │  dagster-webserver (full)       ← Entra OAuth, group Operators  │
                  │  dagster-webserver --read-only  ← Entra OAuth, group Viewers    │
                  │  dagster-daemon (schedules, sensors, run queue)                │
                  │  code-location servers: one container app per domain           │
                  │  run workers: ACA Jobs, one per run (AcaRunLauncher)           │
                  └───┬──────────────┬──────────────┬─────────────────────────────┘
                      │ Entra token  │ private endpoints / PrivateLink
-          PostgreSQL Flexible     Storage (compute logs,      Databricks · Fabric ·
-          (Dagster metadata,      dbt artifacts)              Snowflake · Azure SQL
-          Entra-only auth)
+          PostgreSQL Flexible     Storage (compute logs)     Databricks · Fabric ·
+          (Entra-only auth)                                  Snowflake · Azure SQL
 ```
 
-### 2.1 Hosting: Azure Container Apps
-
 Verified in the current Dagster release (`dagster-azure` / `dagster-postgres` 0.29.26):
+`AcaRunLauncher` runs each run as its own ACA Job with a **per-code-location managed identity**;
+`dagster-postgres` supports `auth_provider: azure_wif` (Entra token per connection, password
+auth disabled); blob compute logs support `DefaultAzureCredential`. The ACA launcher is new →
+Phase 0 spike, AKS fallback.
 
-- `dagster_azure.container_apps.AcaRunLauncher` runs **each Dagster run as its own ACA Job** and
-  accepts a **user-assigned managed identity per code location** (`container_context.aca.identity_id`).
-- `dagster_postgres` supports `auth_provider: azure_wif` — a fresh Entra token is injected as the
-  password on each connection, so the metadata DB runs with **password auth disabled**.
-- `dagster_azure` blob compute log manager supports `DefaultAzureCredential`.
+## 3. Separation of concerns: two repositories
 
-The ACA launcher is new, so Phase 0 includes a spike. Fallback: AKS + the official Dagster Helm
-chart (same images, same code).
+Infrastructure and solution change at different speeds, are owned by different roles and need
+different permissions. They are split into **two repositories with a versioned contract** between
+them. Neither imports code from the other.
 
-### 2.2 Internet access behind Entra
+| | `multi-platform-orchestrator-infra` (new repo) | `multi-platform-orchestrator` (this repo) |
+|---|---|---|
+| Contains | Terraform only | Python, Dagster definitions, Containerfiles, app deployment, local Podman stack |
+| Owns | Network, ACA environment, Postgres, ACR, storage, Front Door/WAF, monitoring, Entra groups & app registrations, managed identities, federated credentials, **platform grants** (Unity Catalog, Snowflake roles, Fabric workspace roles) | Core library, components, code locations, dbt projects, images, container app + job definitions, Dagster instance config |
+| Deploy identity | `infra-deployer-<env>`: rights to create resources and role assignments (powerful, rarely used, approval-gated) | `app-deployer-<env>`: push to ACR + update container apps in one RG. Cannot change networking, identities or grants |
+| Changes when | New environment, new domain (identity + grants), platform change | Code, assets, schedules, dbt models |
+| Release cadence | Slow, reviewed by platform/security | Fast, reviewed by data engineers |
 
-- **Azure Front Door Premium** with WAF (managed OWASP rules, rate limiting, geo filtering if
-  wanted) is the only public entry point. It reaches the **internal** ACA environment over
-  Private Link, so no Container App has a public IP.
-- **Entra OAuth/OIDC sign-in** on the webserver apps via Container Apps built-in authentication
-  (Easy Auth). The enterprise app requires user assignment; only the `Dagster-Viewers` and
-  `Dagster-Operators` groups are assigned.
-- Viewers → read-only webserver (`dagster-webserver --read-only`), Operators → full webserver,
-  on separate hostnames. Open-source Dagster has no RBAC, so this split is the access control.
-- Conditional Access (MFA, compliant device, sign-in risk) applies automatically.
-- Simpler, cheaper alternative if Front Door is not wanted: external ACA ingress + Easy Auth only
-  (still Entra-protected, but no WAF and the environment has a public endpoint).
+### 3.1 The contract
 
-### 2.3 Local runtime (Podman)
+The infra pipeline publishes a **non-secret environment contract** per environment, e.g.
+`contract/<env>.json`, to a storage container (read access via Entra RBAC for the app deployer):
 
-- `podman compose` stack: Postgres, Azurite (blob), dagster-webserver, dagster-daemon, code
-  location containers — the same images as Azure.
-- Local run launcher: `dagster-docker`'s `DockerRunLauncher` pointed at the Podman socket
-  (Docker-compatible API), so each run gets its own container, like ACA Jobs in Azure.
-- Local auth: `AzureCliCredential` (developer's own Entra login via `az login`) against **dev**
-  platforms only. No Entra sign-in in front of the local UI.
-- `make` / `just` targets: `up`, `down`, `build`, `test`, `lint`.
+```json
+{
+  "schema_version": 1,
+  "environment": "dev",
+  "location": "westeurope",
+  "subscription_id": "…",
+  "resource_group": "rg-mpo-dev",
+  "aca_environment_id": "…",
+  "acr_login_server": "acrmpodev.azurecr.io",
+  "postgres": { "host": "…", "database": "dagster", "user": "id-dagster-platform-dev" },
+  "compute_logs": { "account": "…", "container": "compute-logs" },
+  "identities": {
+    "platform": { "resource_id": "…", "client_id": "…" },
+    "webserver": { "resource_id": "…", "client_id": "…" },
+    "domains": { "sales": { "resource_id": "…", "client_id": "…" } }
+  },
+  "auth": { "tenant_id": "…", "ui_app_client_id": "…" },
+  "ingress": { "full_hostname": "…", "readonly_hostname": "…" },
+  "platforms": {
+    "databricks": { "host": "…" },
+    "snowflake": { "account": "…" },
+    "fabric": { "workspaces": { "sales": "…" } }
+  }
+}
+```
 
-## 3. Identity and least-privilege model
+- The JSON Schema lives in the **solution** repo (it is the consumer) and is validated by both
+  pipelines. Breaking changes bump `schema_version`.
+- The solution never reads Terraform state and never calls Terraform.
+- Locally, a hand-written `contract/local.json` points at the Podman stack and dev platforms.
 
-### 3.1 Identities (one set per environment)
+### 3.2 Modularity inside each repo
+
+- **Infra**: small Terraform modules (`network`, `aca_env`, `frontdoor`, `postgres`, `acr`,
+  `storage`, `monitoring`, `entra`, `identity`, `access_databricks`, `access_snowflake`,
+  `access_fabric`, `access_azure_sql`, `contract`). Each domain is declared once in a
+  `domains/<name>.yaml` file (which platforms, catalogs/schemas/workspaces, read vs write);
+  Terraform derives the identity and every grant from it. Adding a domain = one YAML file.
+- **Solution**: `orchestrator_core` (auth, resources, lineage) is a library with no knowledge of
+  specific domains. Platform integrations are **Dagster Components** (YAML-configured, reusable).
+  Each domain is an independent code location with its own image and identity; domains can later
+  move to their own repos without changing the core.
+
+## 4. Lineage across platforms
+
+Yes — the cross-platform DAG only exists if Dagster knows which asset reads which. Dagster's
+asset graph **is** the DAG: scheduling, automation conditions, backfills, freshness and impact
+analysis all run off asset dependencies. So lineage is a core design concern, not a reporting
+add-on.
+
+### 4.1 Canonical asset keys = physical data
+
+Every asset key identifies the **data object**, not the job that produces it, using one
+convention across all platforms:
+
+| Platform | Key |
+|---|---|
+| Databricks (Unity Catalog) | `databricks/<catalog>/<schema>/<table>` |
+| Snowflake | `snowflake/<database>/<schema>/<table>` |
+| Fabric Lakehouse / Warehouse | `fabric/<workspace>/<item>/<schema>/<table>` |
+| Fabric semantic model | `fabric/<workspace>/semantic_model/<name>` |
+| Azure SQL | `azuresql/<server>/<database>/<schema>/<table>` |
+
+A function in `orchestrator_core.lineage` builds and parses these keys; every component uses it,
+so two components describing the same table always produce the same key and connect
+automatically. When the same data is visible on two platforms (OneLake shortcut, Snowflake
+external table on ADLS, Databricks reading OneLake) an **alias map** links the keys.
+
+### 4.2 Where dependencies come from
+
+| Source | How lineage is obtained | Mode |
+|---|---|---|
+| **dbt** (all adapters) | `manifest.json`: model → model deps automatically; dbt `sources` translated to canonical keys of upstream assets (custom `DagsterDbtTranslator`) — the main glue between platforms | Automatic |
+| **Fabric pipelines / notebooks** | Declared in component YAML (`reads:` / `writes:` tables). Optional discovery: item definition API (pipeline JSON source/sink, notebook Lakehouse bindings) | Declared + discovered |
+| **Fabric semantic models** | Item definition (TMDL) → source tables of each partition | Discovered, declared override |
+| **Databricks jobs** | Declared in component YAML. Optional discovery: Unity Catalog lineage system tables (`system.access.table_lineage`) | Declared + discovered |
+| **Snowflake SQL / tasks** | Declared. Optional discovery: `ACCOUNT_USAGE.ACCESS_HISTORY` / `OBJECT_DEPENDENCIES` | Declared + discovered |
+| Tables loaded by systems outside Dagster | External assets (observed, not materialized) with observation sensors | Declared |
+
+Rule: **declared lineage drives scheduling; discovered lineage validates and enriches.**
+Auto-generating the scheduling graph purely from platform lineage would make the DAG change
+whenever someone runs an ad-hoc query, and discovery often needs broad read rights (e.g. Fabric
+admin scanner APIs) that conflict with least privilege. Instead:
+
+- A **lineage drift check** (CI job + scheduled Dagster asset check) compares declared vs
+  discovered lineage per domain and reports missing or unexpected edges.
+- Discovery uses only each domain's own identity and own grants — no tenant-admin APIs.
+- Column-level lineage from dbt and Unity Catalog is attached as asset metadata where available.
+
+### 4.3 Example graph (end-to-end target)
+
+```
+fabric/sales/lh_raw/dbo/orders          (Fabric pipeline: ingest)
+        │
+databricks/sales/silver/orders          (Databricks job via Pipes)
+        │
+snowflake/SALES/MART/fct_orders         (dbt-snowflake model; source = databricks key via alias/external table)
+        │
+fabric/sales/semantic_model/Sales       (semantic model refresh)
+```
+
+### 4.4 Lineage outside Dagster (later)
+
+Optional export of the Dagster asset graph to **Microsoft Purview** or an **OpenLineage**
+endpoint so governance tools see the same lineage. Not required for the DAG itself.
+
+## 5. Identity and least privilege
+
+### 5.1 Identities (one set per environment, all created in the infra repo)
 
 | Identity | Type | Gets access to | Explicitly NOT |
 |---|---|---|---|
-| `id-dagster-platform-<env>` | UAMI | Metadata Postgres (Dagster schema), create/start ACA Jobs in its own RG (custom role, not Contributor), ACR pull, compute-log container | Any data platform |
-| `id-dagster-web-<env>` | UAMI | Metadata Postgres, ACR pull | Any data platform, ACA Jobs |
-| `id-cl-<domain>-<env>` (one per code location) | UAMI | Only that domain's objects on each platform (§4), its own storage paths | Other domains, metadata DB DDL |
-| `gh-deploy-<env>` | Entra app + GitHub OIDC federated credential (subject `repo:bendfeldt/multi-platform-orchestrator:environment:<env>`) | Push to ACR, update container apps in that env's RG | Data platforms, other environments |
-| `gh-tf-<env>` | Entra app + GitHub OIDC | Terraform apply for that env (scoped RG roles + platform admin rights needed to grant) | Other environments |
+| `id-dagster-platform-<env>` | UAMI | Metadata Postgres, create/start ACA Jobs in its RG (custom role), ACR pull, compute-log container | Any data platform |
+| `id-dagster-web-<env>` | UAMI | Metadata Postgres, ACR pull | Data platforms, ACA Jobs |
+| `id-cl-<domain>-<env>` | UAMI | Only that domain's objects (from `domains/<name>.yaml`) | Other domains |
+| `infra-deployer-<env>` | Entra app, federated credential (GitHub **and/or** ADO) | Terraform apply for that env | Other environments |
+| `app-deployer-<env>` | Entra app, federated credential (GitHub **and/or** ADO) | ACR push, container app/job updates in that env's RG, read contract | Network, identities, grants, other envs |
 
-- Run workers inherit the code location's identity, so a `sales` run cannot touch `finance`.
-- Role assignments are scoped to the narrowest resource (container, database, workspace).
-- Platform-side permissions are granted to **Entra security groups** containing the UAMIs.
-- Dev/test identities never get prod access. Separate subscriptions per environment
-  are recommended; separate resource groups are the minimum.
+- Run workers inherit their code location's identity; `sales` runs cannot touch `finance`.
+- Platform permissions are granted to Entra security groups containing the UAMIs.
+- Dev/test identities never have prod access.
 
-### 3.2 Secrets
+### 5.2 Subscription layout (both supported)
 
-Goal: **zero stored secrets**. Every in-scope platform supports Entra/workload identity. A Key
-Vault (RBAC mode, private endpoint) is still provisioned for exceptions, with per-secret grants.
+Each environment root module takes `subscription_id` and `resource_group_name` inputs:
 
-## 4. Platform connectors
+- **Subscription per environment** (recommended for prod isolation): different `subscription_id`
+  per env.
+- **Shared subscription**: same `subscription_id`, different resource groups; all role
+  assignments are scoped to the resource group, never the subscription.
 
-All connectors live in `orchestrator_core` as Dagster `ConfigurableResource`s and get tokens from
-one `AzureCredentialResource` (`ManagedIdentityCredential` in Azure, `AzureCliCredential` locally).
-Tokens are fetched per connection/request via azure-identity's cache, never once per run.
+### 5.3 Setup inputs
 
-| Platform | Dagster integration | Auth (no secrets) | Least-privilege grants (in Terraform) |
+A `setup` script in the infra repo asks for (or reads from a `setup.yaml`) and writes
+`envs/<env>/terraform.tfvars`:
+
+- tenant ID, subscription ID per env (or one shared), resource-group names
+- **location** — optional, default `westeurope`
+- naming prefix, CI provider(s) (`github`, `ado`, or both) and their repo/project identifiers
+- existing Databricks workspace URLs, Snowflake account per env, Fabric workspace IDs
+- Entra group object IDs for Viewers / Operators (or create them)
+
+It then bootstraps Terraform state storage (Entra auth, no keys) and the deployer identities with
+their federated credentials. Bootstrap is the only step run by a human with elevated rights.
+
+## 6. Networking and ingress
+
+### 6.1 Private by default
+
+Internal ACA environment; private endpoints + private DNS for Postgres, ACR, storage, Key Vault,
+Azure SQL, Databricks (Private Link) and Snowflake (PrivateLink). Fabric: workspace private links
+where available. Egress via NAT Gateway (Azure Firewall optional for strict allowlisting).
+
+### 6.2 Internet ingress — chosen option
+
+**Azure Front Door Premium + WAF + Private Link to the internal ACA environment**, Entra
+OAuth on the apps (Container Apps built-in auth), user assignment required, Conditional Access.
+
+Why this one:
+
+| Option | Security | Rough fixed cost / month* |
+|---|---|---|
+| External ACA ingress + Entra auth only | No WAF, public endpoint on the environment | ~0 |
+| Application Gateway WAF_v2 in VNet | WAF, private backend; regional, you manage capacity | ~$250–350 per env |
+| **Front Door Premium + WAF + Private Link** | WAF with managed rule sets + bot protection, global DDoS absorption, **no public endpoint on the backend at all** | ~$330 per profile |
+
+\* list-price ballpark, verify for your region and agreement.
+
+Cost control: **one Front Door profile for dev + test** (separate endpoints, routes and WAF
+policies per env) and **a dedicated profile for prod**. This is a Terraform input
+(`frontdoor_mode = shared_nonprod | per_env`), so it can be one profile per env if preferred.
+
+## 7. Platform connectors
+
+All connectors are `ConfigurableResource`s in `orchestrator_core`, getting tokens from one
+`AzureCredentialResource` (`ManagedIdentityCredential` in Azure, `AzureCliCredential` locally),
+fetched per connection/request, never once per run.
+
+| Platform | Integration | Auth | Grants (in infra repo) |
 |---|---|---|---|
-| **Databricks (Azure)** | `dagster-databricks` (Jobs + **Pipes**) | UAMI registered as Databricks service principal; Entra token as bearer | Workspace user (not admin); `CAN_MANAGE_RUN` on specific jobs; Unity Catalog grants on specific catalogs/schemas; cluster policies |
-| **Snowflake** | `dagster-snowflake` | Snowflake **Workload Identity Federation** (`authenticator=WORKLOAD_IDENTITY`, provider AZURE); fallback External OAuth with Entra | Service user + role per domain; one warehouse; grants on specific DB/schemas; no `SYSADMIN`/`ACCOUNTADMIN` |
-| **Azure SQL** | Custom resource (pyodbc, ODBC Driver 18) | Entra token via `SQL_COPT_SS_ACCESS_TOKEN`; server Entra-only | Contained user `FROM EXTERNAL PROVIDER`; schema-level roles; no `db_owner` |
-| **Microsoft Fabric** | **Custom resource** (no official integration) — see §4.1 | Entra tokens: Fabric API `https://api.fabric.microsoft.com/.default`, Power BI API `https://analysis.windows.net/powerbi/api/.default` | Tenant setting "Service principals can use Fabric APIs" limited to one security group; workspace role per workspace (Contributor where items run, Viewer where only read) |
-| **ADLS Gen2 / Blob** | `dagster-azure` | MI | `Storage Blob Data Contributor` on a specific container |
+| Databricks | `dagster-databricks` (Jobs + Pipes) | UAMI as Databricks SP, Entra token | Workspace user; `CAN_MANAGE_RUN` on specific jobs; UC grants on specific schemas |
+| Snowflake | `dagster-snowflake` | Workload Identity Federation (`WORKLOAD_IDENTITY`, AZURE); fallback External OAuth | Role per domain; one warehouse; schema-level grants |
+| Azure SQL | Custom (pyodbc, ODBC 18) | Entra access token; Entra-only server | Contained user, schema-level roles |
+| Fabric | Custom (§7.1) | Entra tokens for Fabric API and Power BI API | SP tenant setting limited to a group; workspace role per workspace |
+| ADLS / Blob | `dagster-azure` | MI | Data role on a specific container |
 
-### 4.1 Fabric
+### 7.1 Fabric
 
-- **Generic item job runner**: Fabric REST "Run On Demand Item Job"
-  (`POST /v1/workspaces/{ws}/items/{item}/jobs/instances?jobType=...`) → poll the job instance
-  until done → surface status, duration and failure reason as Dagster metadata. Works for any
-  item type that has a job type (Spark job definitions, copy jobs, etc.).
-- **First-class asset factories**:
-  - `fabric_pipeline_asset` — Data Pipeline (`jobType=Pipeline`), with optional parameters.
-  - `fabric_notebook_asset` — Notebook (`jobType=RunNotebook`), with parameters and Lakehouse/
-    environment config.
-  - `fabric_semantic_model_asset` — semantic model refresh via the Power BI **enhanced refresh**
-    API (`POST /groups/{ws}/datasets/{id}/refreshes`) with tables/partitions and polling.
-- Cancellation: terminating a Dagster run cancels the Fabric job instance / refresh.
-- Optional: Fabric Warehouse / Lakehouse SQL endpoint via ODBC (same code as Azure SQL) for
-  asset checks.
+- Generic item job runner (Run On Demand Item Job API, poll, cancel) for any item with a job type.
+- Components: `FabricPipeline`, `FabricNotebook` (parameters, Lakehouse/environment),
+  `FabricSemanticModelRefresh` (Power BI enhanced refresh API, tables/partitions).
+- Lineage per §4.2.
 
-### 4.2 dbt
+### 7.2 dbt
 
-- `dagster-dbt` with each dbt model as a Dagster asset, so dbt lineage joins the cross-platform
-  graph (e.g. Fabric pipeline → Snowflake dbt models → Fabric semantic model refresh).
-- One dbt project per domain/platform: `dbt-snowflake`, `dbt-databricks`, `dbt-fabric`.
-- Auth without secrets: the Dagster resource mints a short-lived Entra/WIF token for the run's
-  managed identity and passes it to dbt via environment variables in `profiles.yml`
-  (Snowflake OAuth token / WIF, Databricks Entra token as `token`, Fabric `ServicePrincipal`→
-  token or `auto`). Exact per-adapter method confirmed in Spike D.
-- The dbt manifest is built at image build time (`dbt parse`) so code-location startup is fast.
-- dbt tests become Dagster asset checks.
+- `dagster-dbt`; one dbt project per domain/platform (`dbt-snowflake`, `dbt-databricks`,
+  `dbt-fabric`); manifest built at image build time.
+- Short-lived tokens from the run's MI passed to dbt via env vars in `profiles.yml`.
+- dbt sources map to canonical keys (§4.1); dbt tests become asset checks.
 
-### 4.3 Cross-platform asset model
-
-- Asset keys prefixed by platform and domain: `["snowflake", "sales", "orders"]`,
-  `["databricks", "sales", "orders_enriched"]`, `["fabric", "sales", "orders_model"]`.
-- Assets owned by other tools are declared as external assets and observed via sensors.
-- Asset checks (row counts, freshness, schema) and declarative automation
-  (`AutomationCondition`) instead of fixed cron where possible.
-
-## 5. Repository layout
+## 8. Solution repository layout (this repo)
 
 ```
 multi-platform-orchestrator/
-├── pyproject.toml               # uv workspace root, ruff, pyright, pytest
+├── pyproject.toml                # uv workspace, ruff, pyright, pytest
 ├── libs/orchestrator_core/
 │   └── src/orchestrator_core/
-│       ├── auth.py              # AzureCredentialResource, token helpers
-│       ├── resources/           # databricks.py, fabric.py, snowflake.py, azure_sql.py, adls.py
-│       ├── assets/              # factories: fabric_*_asset, sql_asset, ...
-│       ├── dbt/                 # token → dbt env helpers
-│       └── checks/
+│       ├── auth.py               # AzureCredentialResource
+│       ├── contract.py           # load + validate environment contract
+│       ├── lineage/              # canonical keys, alias map, discovery, drift check
+│       ├── resources/            # databricks, fabric, snowflake, azure_sql, adls
+│       ├── components/           # FabricPipeline, FabricNotebook, FabricSemanticModelRefresh,
+│       │                         # DatabricksJob, SnowflakeSql, AzureSqlProcedure, ...
+│       └── dbt/                  # translator, token → env helpers
 ├── code_locations/
-│   └── example_sales/           # one code location = one domain = one identity = one image
-│       └── dbt/                 # dbt project(s) for this domain
-├── containers/
-│   ├── Containerfile.dagster    # webserver + daemon (non-root, slim, pinned)
-│   └── Containerfile.codeloc    # base for code locations
+│   └── example_sales/            # one domain = one code location = one identity = one image
+│       ├── defs/                 # component YAML (assets, reads/writes, schedules)
+│       └── dbt/
+├── contract/
+│   ├── schema.json               # contract JSON Schema (source of truth)
+│   └── local.json
+├── containers/                   # Containerfiles (non-root, slim, pinned)
 ├── deploy/
-│   ├── dagster.azure.yaml       # Postgres azure_wif, AcaRunLauncher, blob compute logs
-│   ├── dagster.local.yaml       # Postgres (local), DockerRunLauncher on Podman socket
-│   └── workspace.yaml
-├── local/compose.yaml           # podman compose stack
-├── infra/                       # Terraform
-│   ├── modules/                 # network, aca, frontdoor, postgres, identities, acr, storage,
-│   │                            # monitoring, entra (apps/groups), databricks, snowflake, fabric
-│   └── envs/{dev,test,prod}/    # root modules, remote state in Azure Storage (Entra auth)
-├── .github/workflows/           # ci.yml, build.yml (podman build), deploy.yml, terraform.yml
-└── docs/                        # PLAN.md, ARCHITECTURE.md, onboarding guides, runbooks
+│   ├── dagster.azure.yaml        # Postgres azure_wif, AcaRunLauncher, blob compute logs
+│   ├── dagster.local.yaml        # local Postgres, DockerRunLauncher on Podman socket
+│   ├── aca/                      # container app / job templates rendered from the contract
+│   └── scripts/                  # build.sh, push.sh, deploy.sh — called by both CI systems
+├── local/compose.yaml            # podman compose stack
+├── .github/workflows/            # thin wrappers around deploy/scripts
+├── .azuredevops/pipelines/       # thin wrappers around deploy/scripts (+ templates)
+└── docs/
 ```
 
-### 5.1 Terraform
+The infra repo mirrors this: `modules/`, `envs/{dev,test,prod}/`, `domains/*.yaml`,
+`scripts/` (setup, plan, apply, publish-contract), `.github/workflows/`, `.azuredevops/pipelines/`.
 
-- Providers: `azurerm`, `azuread`, `databricks`, `Snowflake-Labs/snowflake`, `microsoft/fabric`.
-- State: Azure Storage per environment, `use_azuread_auth = true` (no storage keys), versioning
-  and soft delete on.
-- Platform grants (Unity Catalog, Snowflake roles, Fabric workspace roles) are in Terraform too,
-  so every permission is reviewable in a PR.
-- CI: `terraform fmt/validate`, `tflint`, `checkov`/`trivy` on every PR; `plan` on PR,
-  `apply` on merge for dev, with GitHub environment approvals for test and prod.
+## 9. CI/CD: GitHub and Azure DevOps
 
-### 5.2 CI/CD
+- **All logic lives in scripts** (`deploy/scripts/*.sh` in the solution repo, `scripts/*.sh` in
+  infra). GitHub workflows and ADO pipelines are thin wrappers that set up tools, log in, and
+  call the same scripts — no logic duplicated in YAML.
+- **Secretless login on both**:
+  - GitHub Actions → Entra federated credential, subject
+    `repo:<org>/<repo>:environment:<env>`.
+  - Azure DevOps → service connection using **workload identity federation**, issuer
+    `https://vstoken.dev.azure.com/<org-id>`, subject `sc://<org>/<project>/<connection>`.
+  - The infra setup creates federated credentials for whichever CI providers are selected.
+- **Approvals**: GitHub environments with required reviewers ↔ ADO environments with approvals
+  and checks. Dev auto-deploys; test and prod require approval.
+- **Promotion**: the solution builds the image once (`podman build`), scans it, pushes to the
+  dev ACR, and promotes the **same digest** to test/prod (`az acr import`).
+- Pipelines per repo:
+  - infra: `validate` (fmt, validate, tflint, checkov/trivy) on PR → `plan` on PR →
+    `apply` + `publish-contract` per env with approval.
+  - solution: `ci` (ruff, pyright, pytest, `dg check`, lineage drift vs dev) on PR →
+    `build` → `deploy` per env with approval.
 
-- `ci.yml`: ruff, pyright, pytest (platforms mocked), `dagster definitions validate`.
-- `build.yml`: `podman build` images, vulnerability scan, push to ACR (via OIDC).
-- `deploy.yml`: promote the **same image digest** dev → test → prod, with approvals.
+## 10. Delivery phases
 
-## 6. Hardening
+**Phase 0 — Spikes (dev)**
+- A: `AcaRunLauncher` + per-code-location UAMI (fallback AKS).
+- B: Snowflake WIF from an ACA Job MI.
+- C: Fabric pipeline/notebook run + semantic model refresh with an MI.
+- D: dbt adapters with MI tokens.
+- E: Front Door Premium → Private Link → internal ACA + Easy Auth.
+- F: Lineage discovery feasibility per platform with domain-scoped (not admin) rights.
 
-- ACA environment internal; Front Door + WAF is the only public ingress.
-- Private endpoints + private DNS: Postgres, ACR, Storage, Key Vault, Azure SQL, Databricks
-  (Private Link), Snowflake (PrivateLink, Business Critical edition required — otherwise network
-  policy allowlisting the NAT egress IP). Fabric: workspace-level private links where available,
-  otherwise Entra Conditional Access for workload identities.
-- Egress through NAT Gateway / Azure Firewall with an allowlist.
-- Images non-root, dependencies pinned, scanned in CI; ACR admin user disabled.
-- Azure Policy: deny public network access on data services; require Entra-only auth.
-- Logs: stdout → Log Analytics; compute logs → Blob; run-failure alerts → Teams/email.
+**Phase 1 — Solution skeleton (this repo)**
+- uv workspace, lint/type/test, contract schema + loader, `AzureCredentialResource`,
+  canonical asset-key module, example code location, Containerfiles, Podman stack,
+  CI for GitHub and ADO (ci only).
 
-## 7. Delivery phases
+**Phase 2 — Connectors and components**
+- Azure SQL → Snowflake → Databricks (Pipes) → Fabric (pipeline, notebook, semantic model,
+  generic) → dbt → ADLS. Unit tests with mocked APIs; opt-in integration tests against dev.
 
-**Phase 0 — Spikes (in a dev subscription)**
-- A: `AcaRunLauncher` with per-code-location UAMI end to end (fallback AKS).
-- B: Snowflake WIF from an ACA Job managed identity.
-- C: Fabric pipeline/notebook run + semantic model refresh with a managed identity.
-- D: dbt adapters (Snowflake, Databricks, Fabric) with tokens from the managed identity.
-- E: Front Door → Private Link → internal ACA with Easy Auth.
+**Phase 3 — Lineage**
+- dbt translator to canonical keys, alias map, discovery adapters, drift check.
 
-**Phase 1 — Skeleton and local dev**
-- uv workspace, ruff, pyright, pytest, pre-commit, CI.
-- `orchestrator_core` with `AzureCredentialResource` and the example code location.
-- Containerfiles and `podman compose` stack running Dagster locally.
+**Phase 4 — Infra repo**
+- Setup/bootstrap, modules, domain YAML → identities + grants, contract publishing,
+  GitHub + ADO pipelines. Dev first, then test and prod.
 
-**Phase 2 — Connectors** (one PR each, unit tests + opt-in integration tests against dev)
-- Azure SQL → Snowflake → Databricks (Pipes) → Fabric (pipelines, notebooks, semantic models,
-  generic items) → dbt integration → ADLS.
+**Phase 5 — App deployment**
+- Contract-driven ACA templates, deploy scripts, image promotion, GitHub + ADO pipelines.
 
-**Phase 3 — Terraform**
-- Bootstrap (state storage, GitHub OIDC apps), then network, ACA, Front Door, Postgres, ACR,
-  storage, monitoring, identities, Entra apps/groups, and platform grants. Dev first.
+**Phase 6 — End-to-end example** (§4.3) in dev, with checks and alerts.
 
-**Phase 4 — Deployment**
-- `dagster.azure.yaml`, deploy pipeline with image promotion dev → test → prod.
+**Phase 7 — Hardening and docs**
+- Security review, access review, runbooks, "onboard a new domain / platform" guides.
 
-**Phase 5 — End-to-end example**
-- Fabric pipeline → Databricks job → Snowflake dbt models → Fabric semantic model refresh,
-  with asset checks and alerts, deployed to dev.
+Phases 1–3 need no Azure access and can start immediately.
 
-**Phase 6 — Hardening and docs**
-- Security review, access review of every grant, runbooks, "onboard a new domain/platform" guide.
-
-## 8. Risks
+## 11. Risks
 
 | Risk | Mitigation |
 |---|---|
-| ACA run launcher is new | Spike A first; AKS fallback with same images |
-| OSS Dagster has no RBAC | Read-only vs full webserver behind Entra groups; Dagster+ if finer roles are needed |
-| UI exposed to the internet | Front Door WAF + Private Link, Entra with Conditional Access, user assignment required |
-| Fabric / Power BI APIs and SP support change often | Thin custom resource, integration tests against a real dev workspace |
-| dbt adapter auth with managed identity differs per adapter | Spike D; token-via-env-var fallback |
-| Snowflake PrivateLink needs Business Critical | Network policy on NAT egress IP as fallback |
-| Token expiry in long runs | Fetch tokens per connection/request from azure-identity cache |
+| ACA run launcher is new | Spike A; AKS fallback with same images |
+| OSS Dagster has no RBAC | Read-only vs full webserver behind Entra groups; Dagster+ if finer roles needed |
+| UI on the internet | Front Door WAF + Private Link, Entra + Conditional Access, user assignment |
+| Lineage discovery needs broad rights | Declared lineage drives the DAG; discovery is domain-scoped and only validates |
+| Declared lineage drifts from reality | Drift check in CI and as scheduled asset check |
+| Contract drift between repos | JSON Schema validated in both pipelines, `schema_version` |
+| Fabric / Power BI API changes | Thin resource, integration tests against dev |
+| dbt adapter auth differs | Spike D; token-via-env fallback |
+| Two CI systems diverge | All logic in shared scripts; YAML wrappers only |
 
-## 9. Remaining open questions
+## 12. Open items
 
-1. Confirm **Azure Container Apps** for hosting (vs AKS / Dagster+ Hybrid).
-2. Separate **Azure subscriptions** per environment, or one subscription with resource groups?
-3. Which Azure region(s)?
-4. Snowflake edition (affects PrivateLink) and whether the Snowflake account(s) are per
-   environment.
-5. Are Databricks and Fabric workspaces already existing (Terraform imports/grants only), or
-   should Terraform create them?
-6. Front Door + WAF (recommended) or the simpler external-ingress option for the UI?
+1. Create the infra repo (suggested name `multi-platform-orchestrator-infra`) — I can't create
+   repositories from this session.
+2. Default region if none is given at setup (`westeurope` proposed).
