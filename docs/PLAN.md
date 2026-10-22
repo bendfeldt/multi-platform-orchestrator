@@ -392,6 +392,5 @@ Phases 1–3 need no Azure access and can start immediately.
 
 ## 12. Open items
 
-1. Create the infra repo (suggested name `multi-platform-orchestrator-infra`) — I can't create
-   repositories from this session.
+1. Create the infra repo (suggested name `multi-platform-orchestrator-infra`), on GitHub or ADO.
 2. Default region if none is given at setup (`westeurope` proposed).
