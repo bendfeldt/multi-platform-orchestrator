@@ -93,6 +93,9 @@ resource "azurerm_role_definition" "app_deployer" {
       "Microsoft.App/managedEnvironments/read",
       "Microsoft.App/managedEnvironments/join/action",
       "Microsoft.Resources/subscriptions/resourceGroups/read",
+      # az acr login reads the registry; az acr import copies dev's images in (AcrPush can't).
+      "Microsoft.ContainerRegistry/registries/read",
+      "Microsoft.ContainerRegistry/registries/importImage/action",
     ]
   }
 }

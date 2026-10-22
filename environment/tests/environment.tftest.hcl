@@ -146,8 +146,12 @@ run "control_plane_rights_stay_narrow" {
     error_message = "The cleanup job may only read and delete Jobs."
   }
   assert {
-    condition     = alltrue([for a in azurerm_role_definition.app_deployer.permissions[0].actions : startswith(a, "Microsoft.App/") || a == "Microsoft.Resources/subscriptions/resourceGroups/read"])
-    error_message = "The app deployer may only manage Container Apps."
+    condition = alltrue([for a in azurerm_role_definition.app_deployer.permissions[0].actions : startswith(a, "Microsoft.App/") || contains([
+      "Microsoft.Resources/subscriptions/resourceGroups/read",
+      "Microsoft.ContainerRegistry/registries/read",
+      "Microsoft.ContainerRegistry/registries/importImage/action",
+    ], a)])
+    error_message = "The app deployer may only manage Container Apps and bring images into its registry."
   }
   assert {
     condition     = jsondecode(azurerm_resource_group_policy_assignment.images.parameters).registry.value == "acrmpodevx7k2.azurecr.io"
