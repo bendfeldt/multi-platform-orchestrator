@@ -24,7 +24,7 @@ Fabric capacity), which Dagster triggers but does not add to, and Entra ID P1 li
 | Private endpoint | ≈ $7.30 / month each + ≈ $0.01 / GB processed |
 | Front Door **Standard** base fee | $35 / month per profile |
 | Front Door **Premium** base fee | $330 / month per profile |
-| Front Door Standard requests | ≈ $0.009 per 10,000 (NA/EU) |
+| Front Door Standard / Premium requests | ≈ $0.009 / $0.015 per 10,000 (NA/EU) |
 | Front Door data transfer edge → client | ≈ $0.083 / GB (first tier, NA/EU) |
 | Log Analytics (Analytics logs) | ≈ $2.30–3.00 / GB ingested (first 5 GB/month per billing account free) |
 | Private DNS zone | $0.50 / zone / month |
@@ -42,7 +42,7 @@ These changes to the plan keep the bill low without weakening security:
 | Private endpoints for Storage, Key Vault, Azure SQL | **Service endpoints + resource firewall** limited to the ACA subnet, public access otherwise denied | ≈ $22 |
 | ACR Premium (needed for private endpoint) | **ACR Basic**, admin user off, Entra-only pull/push, no anonymous pull | ≈ $45 |
 | Webservers always on | **Scale to zero** (a few seconds' cold start on first visit) | ≈ $10–24 |
-| Front Door Premium | **Front Door Standard**, prod only by default (toggle per env) | ≈ $295 |
+| One Front Door Premium profile per environment | **One shared Premium profile** for dev/test/prod, separate endpoints, WAF policies and origins | ≈ $660 total |
 | Postgres high availability | Off (HA doubles compute); daily backups with 7-day retention | ≈ 1× compute |
 
 Private endpoints stay available as a per-service toggle (`private_endpoints = [...]`) for
@@ -58,8 +58,8 @@ anyone whose policy requires them, e.g. Databricks / Snowflake PrivateLink (≈ 
 | Webservers (full + read-only) | 0.5 vCPU / 1 GiB, scale to zero, ~40 h use/month | same | read-only min 1 replica (mostly idle), full scales to zero |
 | Runs (ACA Jobs, 0.5 vCPU / 1 GiB) | 20/day × 3 min | 20/day × 3 min | 200/day × 5 min |
 | PostgreSQL | B1ms, 32 GB | B1ms, 32 GB | B2s, 64 GB |
-| Ingress | Easy Auth | Easy Auth | Front Door Standard + Easy Auth |
-| UI traffic | small | small | ~3 M requests, ~20 GB/month (Dagster UI polls frequently) |
+| Ingress | shared Front Door Premium + Easy Auth | same | same |
+| UI traffic (all envs together) | | | ~4 M requests, ~25 GB/month (Dagster UI polls frequently) |
 
 A run job costs about $0.0009 per minute (0.5 vCPU + 1 GiB, active rate). Runs mostly wait on
 Databricks / Fabric / Snowflake, so they are short and small.
@@ -80,22 +80,21 @@ Databricks / Fabric / Snowflake, so they are short and small.
 | Log Analytics (daily cap, short retention) | 0–5 | 0–5 | 5–15 |
 | Private DNS zones | 1.00 | 1.00 | 1.00 |
 | Key Vault (no secrets stored; operations only) | <1 | <1 | <1 |
-| Front Door Standard (base + requests + transfer) | — | — | 40.00 |
-| **Total** | **≈ $65–70** | **≈ $65–70** | **≈ $235–245** |
+| **Total** | **≈ $65–70** | **≈ $65–70** | **≈ $195–205** |
 
-**All three environments: ≈ $365–385 / month.**
+Shared Front Door Premium profile: $330 base + ≈ $6 requests + ≈ $2 transfer ≈ **$335–340**.
+
+**All three environments incl. Front Door: ≈ $660–680 / month.**
 
 ### Variants
 
 | Variant | Change | All envs / month |
 |---|---|---|
-| Lean | No Front Door anywhere | ≈ $325–345 |
-| Prod on B1ms to start | Postgres B1ms in prod, scale up when needed | ≈ $320–340 |
-| Lean + prod B1ms | both of the above | ≈ $280–300 |
-| Front Door Standard in every env | +2 profiles | ≈ $445–465 |
+| Prod on B1ms to start | Postgres B1ms in prod, scale up when needed | ≈ $615–635 |
+| One Premium profile per environment | +2 profiles | ≈ $1,320–1,340 |
 | One shared subscription | Free ACA grant counted once instead of three times | +≈ $11 |
 | Databricks + Snowflake PrivateLink | +2 private endpoints per env | +≈ $45 |
-| Front Door **Premium** in prod instead of Standard | managed WAF rules, private origin | +≈ $295 |
+| Front Door Standard instead of Premium | no managed WAF rules, no Private Link (public origin) | ≈ $365–385 |
 
 ### What moves the number
 
@@ -103,7 +102,8 @@ Databricks / Fabric / Snowflake, so they are short and small.
    cost: ≈ $20 per 0.25 vCPU always-on container per month. Each extra domain in an environment
    adds ≈ $20.
 2. **PostgreSQL SKU**: B1ms → B2s is +$43 per environment.
-3. **Front Door**: $35 per profile per month plus small traffic charges.
+3. **Front Door Premium**: $330 per profile per month plus small traffic charges — the
+   single biggest line item, which is why one profile is shared by all environments.
 4. **Run volume**: ≈ $0.0009 per run-minute; 10,000 run-minutes ≈ $9.
 
 ## 5. CI/CD costs
@@ -115,17 +115,8 @@ Databricks / Fabric / Snowflake, so they are short and small.
 
 ## 6. Front Door Standard vs Premium
 
-| | Standard ($35) | Premium ($330) |
+| | Standard ($35) | Premium ($330) — chosen |
 |---|---|---|
 | WAF custom rules (IP/geo filtering, rate limiting) | Yes | Yes |
 | WAF managed rule sets (OWASP / DRS) and bot protection | No | Yes |
-| Private Link to origin | No — origin stays public, locked down as below | Yes |
-
-Front Door Standard origin lock-down for Container Apps:
-
-- ACA ingress IP restrictions allow only the `AzureFrontDoor.Backend` service-tag ranges
-  (maintained in Terraform from the published service tags).
-- Those ranges are shared by all Front Door customers, so the webserver app also checks the
-  `X-Azure-FDID` header equals our profile ID (small reverse-proxy sidecar; spike to confirm the
-  IP-rule limit and sidecar cost, which is ≈ $0 extra while the app is scaled to zero).
-- Easy Auth still enforces Entra sign-in behind Front Door.
+| Private Link to origin | No — origin stays public | Yes — ACA environment has no public endpoint |
