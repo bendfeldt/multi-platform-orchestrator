@@ -1,5 +1,7 @@
 # Plan Review and Audit (ponytail-review + ponytail-audit)
 
+**Status: all 16 findings applied in PLAN.md v7** (marked *R1*–*R16* there).
+
 Reviewed: `docs/PLAN.md` v6 and `docs/COSTS.md`, including the latest change (shared Front Door
 Premium). Method: the [ponytail](https://github.com/DietrichGebert/ponytail) `ponytail-review` and
 `ponytail-audit` skills, applied to a plan instead of code. Claims about Dagster were checked

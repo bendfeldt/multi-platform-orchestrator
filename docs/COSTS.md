@@ -39,14 +39,16 @@ These changes to the plan keep the bill low without weakening security:
 | Instead of | Use | Saving / env |
 |---|---|---|
 | Private endpoint for PostgreSQL | **VNet integration** (delegated subnet, private access only) | ≈ $7 |
-| Private endpoints for Storage, Key Vault, Azure SQL | **Service endpoints + resource firewall** limited to the ACA subnet, public access otherwise denied | ≈ $22 |
+| Private endpoints for Storage, Azure SQL | **Service endpoints + resource firewall** limited to the ACA subnet, public access otherwise denied | ≈ $15 |
+| Key Vault | **None** — no secrets exist | ≈ $1 |
 | ACR Premium (needed for private endpoint) | **ACR Basic**, admin user off, Entra-only pull/push, no anonymous pull | ≈ $45 |
 | Webservers always on | **Scale to zero** (a few seconds' cold start on first visit) | ≈ $10–24 |
 | One Front Door Premium profile per environment | **One shared Premium profile** for dev/test/prod, separate endpoints, WAF policies and origins | ≈ $660 total |
 | Postgres high availability | Off (HA doubles compute); daily backups with 7-day retention | ≈ 1× compute |
 
-Private endpoints stay available as a per-service toggle (`private_endpoints = [...]`) for
-anyone whose policy requires them, e.g. Databricks / Snowflake PrivateLink (≈ $7.30 each).
+No private endpoints or NAT Gateway in the first version. Add one only when a platform
+requires private connectivity or a fixed egress IP (≈ $7.30/month per private endpoint,
+≈ $33/month + traffic for a NAT Gateway).
 
 ## 3. Workload assumptions
 
@@ -56,6 +58,8 @@ anyone whose policy requires them, e.g. Databricks / Snowflake PrivateLink (≈ 
 | Daemon size | 0.25 vCPU / 0.5 GiB, always active | 0.25 / 0.5 | 0.5 / 1, always active |
 | Code-location server | 0.25 vCPU / 0.5 GiB each, always active | same | same |
 | Webservers (full + read-only) | 0.5 vCPU / 1 GiB, scale to zero, ~40 h use/month | same | read-only min 1 replica (mostly idle), full scales to zero |
+| Front Door health probes | off (otherwise they keep webservers awake) | off | off |
+| Admin jobs (migrate per deploy, cleanup daily) | ~1 min each, negligible | same | same |
 | Runs (ACA Jobs, 0.5 vCPU / 1 GiB) | 20/day × 3 min | 20/day × 3 min | 200/day × 5 min |
 | PostgreSQL | B1ms, 32 GB | B1ms, 32 GB | B2s, 64 GB |
 | Ingress | shared Front Door Premium + Easy Auth | same | same |
@@ -79,7 +83,6 @@ Databricks / Fabric / Snowflake, so they are short and small.
 | Storage (compute logs, contract, TF state) | 1.00 | 1.00 | 2.00 |
 | Log Analytics (daily cap, short retention) | 0–5 | 0–5 | 5–15 |
 | Private DNS zones | 1.00 | 1.00 | 1.00 |
-| Key Vault (no secrets stored; operations only) | <1 | <1 | <1 |
 | **Total** | **≈ $65–70** | **≈ $65–70** | **≈ $195–205** |
 
 Shared Front Door Premium profile: $330 base + ≈ $6 requests + ≈ $2 transfer ≈ **$335–340**.
