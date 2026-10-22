@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "environment": "dev",
+  "location": "westeurope",
+  "subscription_id": "00000000-0000-0000-0000-000000000000",
+  "resource_group": "rg-mpo-dev",
+  "aca_environment_id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-mpo-dev/providers/Microsoft.App/managedEnvironments/cae-mpo-dev",
+  "acr_login_server": "acrmpodev.azurecr.io",
+  "postgres": { "host": "psql-mpo-dev.postgres.database.azure.com", "database": "dagster" },
+  "compute_logs": { "account": "stmpodevlogs", "container": "compute-logs" },
+  "identities": {
+    "platform": { "resource_id": "/subscriptions/0/resourceGroups/rg-mpo-dev/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-dagster-platform-dev", "client_id": "11111111-1111-1111-1111-111111111111", "principal_name": "id-dagster-platform-dev" },
+    "webserver": { "resource_id": "/subscriptions/0/resourceGroups/rg-mpo-dev/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-dagster-web-dev", "client_id": "22222222-2222-2222-2222-222222222222", "principal_name": "id-dagster-web-dev" },
+    "admin": { "resource_id": "/subscriptions/0/resourceGroups/rg-mpo-dev/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-dagster-admin-dev", "client_id": "33333333-3333-3333-3333-333333333333", "principal_name": "id-dagster-admin-dev" },
+    "domains": {
+      "sales": { "resource_id": "/subscriptions/0/resourceGroups/rg-mpo-dev/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-cl-sales-dev", "client_id": "44444444-4444-4444-4444-444444444444", "principal_name": "id-cl-sales-dev" }
+    }
+  },
+  "auth": {
+    "tenant_id": "55555555-5555-5555-5555-555555555555",
+    "ui_app_client_id": "66666666-6666-6666-6666-666666666666",
+    "ui_ro_app_client_id": "77777777-7777-7777-7777-777777777777"
+  },
+  "ingress": { "full_hostname": "dagster-dev.example.com", "readonly_hostname": "dagster-ro-dev.example.com" },
+  "platforms": {
+    "databricks": { "host": "https://adb-0000000000000000.0.azuredatabricks.net" },
+    "snowflake": { "account": "myorg-sales-dev" },
+    "fabric": { "workspaces": { "sales": "88888888-8888-8888-8888-888888888888" } }
+  }
+}

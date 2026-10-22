@@ -1,6 +1,6 @@
 # Multi-Platform Orchestrator — Implementation Plan
 
-Status: **DRAFT v8 for review**. Nothing is implemented yet. All findings of
+Status: **v8**. Phase 1 (solution skeleton) is implemented; everything else is planned. All findings of
 [PLAN_REVIEW.md](PLAN_REVIEW.md) are applied (marked *R1*–*R16* below).
 
 ## 1. Goal
@@ -111,6 +111,8 @@ Run queue limits in `dagster.yaml` (`run_coordinator: QueuedRunCoordinator`):
 - **`DefaultRunLauncher`** locally: each run is a process inside the code-location container.
   No container-runtime socket is mounted into any container, and `dagster-docker` is not used.
 - Local auth: `AzureCliCredential` (developer's own `az login`) against **dev** platforms only.
+  The containers have no Azure CLI, so platform work runs Dagster on the host
+  (`uv run dagster dev`); the Podman stack checks the full deployment shape.
 
 ## 3. Separation of concerns: two repositories
 
@@ -159,11 +161,10 @@ via RBAC by the app deployer):
 }
 ```
 
-- The JSON Schema lives in the **solution** repo, which validates the contract when it reads
-  it. The infra repo only publishes outputs and has no dependency on the solution repo.
+- The schema is the pydantic model in `orchestrator_core/contract.py` in the **solution** repo,
+  which validates the contract when it reads it. The infra repo only publishes outputs and has no dependency on the solution repo.
   Breaking changes bump `schema_version`.
 - The solution never reads Terraform state and never calls Terraform.
-- Locally, a hand-written `contract/local.json` points at the Podman stack and dev platforms.
 
 ### 3.2 Modularity inside each repo
 
@@ -384,7 +385,7 @@ multi-platform-orchestrator/
 ├── libs/orchestrator_core/
 │   └── src/orchestrator_core/
 │       ├── auth.py               # AzureCredentialResource
-│       ├── contract.py           # load + validate environment contract
+│       ├── contract.py           # environment contract model (the schema) + loader
 │       ├── asset_keys.py         # canonical keys
 │       ├── resources/            # databricks, fabric, snowflake, adls
 │       ├── components/           # FabricItemJob, FabricSemanticModelRefresh, DatabricksJob,
@@ -395,13 +396,11 @@ multi-platform-orchestrator/
 │   └── example_sales/            # one domain = one code location = one identity = one image
 │       ├── defs/                 # component YAML (assets, reads/writes, schedules)
 │       └── dbt/
-├── contract/
-│   ├── schema.json               # contract JSON Schema (validated here only)
-│   └── local.json
-├── containers/                   # Containerfiles (non-root, slim, pinned)
+├── containers/Containerfile      # one file for all images (non-root, slim); SYNC_ARGS picks package
 ├── deploy/
 │   ├── dagster.azure.yaml        # Postgres azure_wif, AcaRunLauncher, queue limits, blob logs
 │   ├── dagster.local.yaml        # local Postgres, DefaultRunLauncher
+│   ├── workspace.local.yaml
 │   ├── aca/                      # container app / job templates rendered from the contract
 │   └── scripts/                  # build.sh, push.sh, deploy.sh — called by both CI systems
 ├── local/compose.yaml            # podman compose stack
@@ -467,10 +466,10 @@ The code lives on GitHub. Deployment can run from **GitHub Actions or Azure DevO
 - E: Front Door Premium → Private Link → internal ACA environment, Easy Auth with two Entra
   apps behind Front Door (forwarded host, redirects, probes off).
 
-**Phase 1 — Solution skeleton (this repo)**
-- uv workspace, lint/type/test, contract schema + loader, `AzureCredentialResource`, canonical
-  asset keys, example code location, Containerfiles, Podman stack, CI for GitHub Actions and
-  Azure DevOps.
+**Phase 1 — Solution skeleton (this repo)** — *done*
+- uv workspace, lint/type/test, contract model + loader, `AzureCredentialResource`, canonical
+  asset keys, example code location (lineage specs), Containerfile, Podman stack, CI for GitHub
+  Actions and Azure DevOps.
 
 **Phase 2 — Connectors, components and lineage**
 - Snowflake → Databricks (Pipes) → Fabric (`FabricItemJob`,
@@ -506,10 +505,11 @@ Phases 1–2 need no Azure access and can start immediately.
 | Backfills overload Postgres or Azure APIs | Queue limits and per-platform tag limits |
 | Two CI systems diverge | All logic in shared scripts; YAML wrappers only |
 | Declared lineage misses an edge | Lineage reviewed in PRs; discovery added per platform only if this happens (§4.4) |
-| Contract drift between repos | Solution validates against its JSON Schema; `schema_version` |
+| Contract drift between repos | Solution validates with its contract model; `schema_version` |
 | Fabric / Power BI API changes | Thin resource, integration tests against dev |
 | dbt adapter auth differs | Spike D; token-via-env fallback |
 
 ## 12. Open items
 
-1. Create the GitHub repo `bendfeldt/multi-platform-orchestrator-infra`.
+1. Create the GitHub repo `bendfeldt/multi-platform-orchestrator-infra` (the session's GitHub
+   integration may not create repositories, so it has to be created by hand).

@@ -1,0 +1,22 @@
+# Virtual uv workspace: the members are the packages, this file only holds shared tool config.
+[tool.uv.workspace]
+members = ["libs/*", "code_locations/*"]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.14", "pyright>=1.1.400"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pyright]
+include = ["libs", "code_locations"]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.13"
+
+[tool.pytest.ini_options]
+testpaths = ["libs", "code_locations"]

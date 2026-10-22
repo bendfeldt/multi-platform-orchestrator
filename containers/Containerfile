@@ -1,0 +1,25 @@
+# One Containerfile for every image; SYNC_ARGS picks what gets installed:
+#   platform (webserver + daemon): --package orchestrator-core --extra webserver
+#   code location:                 --package example-sales
+FROM python:3.13-slim
+
+COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /usr/local/bin/uv
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never \
+    PATH="/app/.venv/bin:$PATH" \
+    DAGSTER_HOME=/opt/dagster/home
+
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+COPY libs libs
+COPY code_locations code_locations
+
+ARG SYNC_ARGS="--package example-sales"
+RUN uv sync --frozen --no-dev --no-editable $SYNC_ARGS \
+    && useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin dagster \
+    && mkdir -p "$DAGSTER_HOME" \
+    && chown dagster "$DAGSTER_HOME"
+
+USER 10001
