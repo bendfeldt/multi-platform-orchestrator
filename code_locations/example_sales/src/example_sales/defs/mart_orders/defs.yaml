@@ -1,0 +1,13 @@
+# The Snowflake table reads Databricks data through an external table, so it declares the
+# Databricks key as its upstream.
+type: orchestrator_core.components.SnowflakeSql
+attributes:
+  name: mart_orders
+  group_name: sales
+  sql: |
+    create or replace table sales.mart.fct_orders as
+    select * from sales.ext.silver_orders;
+  reads:
+    - databricks/sales/silver/orders
+  writes:
+    - snowflake/sales/mart/fct_orders

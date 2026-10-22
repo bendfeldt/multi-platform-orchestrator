@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-uv sync --frozen --all-packages
+uv sync --frozen --all-packages --all-extras
 uv run ruff format --check .
 uv run ruff check .
 uv run pyright

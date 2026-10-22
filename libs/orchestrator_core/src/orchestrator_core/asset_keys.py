@@ -30,3 +30,17 @@ def fabric_table_key(workspace: str, item: str, schema: str, table: str) -> dg.A
 
 def fabric_semantic_model_key(workspace: str, name: str) -> dg.AssetKey:
     return _key("fabric", workspace, "semantic_model", name)
+
+
+_PLATFORMS = {"databricks", "snowflake", "fabric"}
+
+
+def key_from_string(key: str) -> dg.AssetKey:
+    """Parses `platform/part/...` from YAML into the key the functions above build."""
+    platform, *parts = key.split("/")
+    platform = platform.strip().lower()
+    if platform not in _PLATFORMS or not parts:
+        raise ValueError(
+            f"asset key must look like '<{'|'.join(sorted(_PLATFORMS))}>/...': {key!r}"
+        )
+    return _key(platform, *parts)

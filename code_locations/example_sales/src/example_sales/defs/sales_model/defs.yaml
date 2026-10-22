@@ -1,0 +1,10 @@
+type: orchestrator_core.components.FabricSemanticModelRefresh
+attributes:
+  name: sales_model
+  group_name: sales
+  workspace_id: 00000000-0000-0000-0000-000000000001
+  dataset_id: 00000000-0000-0000-0000-000000000003
+  reads:
+    - snowflake/sales/mart/fct_orders
+  writes:
+    - fabric/sales/semantic_model/sales

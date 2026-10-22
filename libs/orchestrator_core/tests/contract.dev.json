@@ -24,7 +24,11 @@
   "ingress": { "full_hostname": "dagster-dev.example.com", "readonly_hostname": "dagster-ro-dev.example.com" },
   "platforms": {
     "databricks": { "host": "https://adb-0000000000000000.0.azuredatabricks.net" },
-    "snowflake": { "account": "myorg-sales-dev" },
+    "snowflake": {
+      "account": "myorg-sales-dev",
+      "oauth_scope": "api://snowflake-dev/.default",
+      "domains": { "sales": { "role": "SALES_RW", "warehouse": "SALES_WH" } }
+    },
     "fabric": { "workspaces": { "sales": "88888888-8888-8888-8888-888888888888" } }
   }
 }

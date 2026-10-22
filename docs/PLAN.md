@@ -1,6 +1,7 @@
 # Multi-Platform Orchestrator — Implementation Plan
 
-Status: **v8**. Phase 1 (solution skeleton) is implemented; everything else is planned. All findings of
+Status: **v8**. Phases 1 (solution skeleton) and 2 (connectors, components, dbt) are implemented and
+tested against mocked platform APIs; everything else is planned. All findings of
 [PLAN_REVIEW.md](PLAN_REVIEW.md) are applied (marked *R1*–*R16* below).
 
 ## 1. Goal
@@ -351,10 +352,9 @@ fetched per connection/request, never once per run.
 
 | Platform | Integration | Auth | Grants (in infra repo) |
 |---|---|---|---|
-| Databricks | `dagster-databricks` (Jobs + Pipes) | UAMI as Databricks SP, Entra token | Workspace user; `CAN_MANAGE_RUN` on specific jobs; UC grants on specific schemas |
-| Snowflake | `dagster-snowflake` | Workload Identity Federation (`WORKLOAD_IDENTITY`, AZURE); fallback External OAuth | Role per domain; one warehouse; schema-level grants |
+| Databricks | `databricks-sdk`: run existing jobs, wait, cancel (Pipes later, when jobs should stream logs to Dagster) | UAMI as Databricks SP, Entra token per request | Workspace user; `CAN_MANAGE_RUN` on specific jobs; UC grants on specific schemas |
+| Snowflake | `snowflake-connector-python` | **External OAuth with Entra tokens** — the same token path works for managed identities in Azure and for `az login` locally. Workload Identity Federation stays an option (Spike B) | Role per domain; one warehouse; schema-level grants |
 | Fabric | Custom (§7.1) | Entra tokens for Fabric API and Power BI API | SP tenant setting limited to a group; workspace role per workspace |
-| ADLS / Blob | `dagster-azure` | MI | Data role on a specific container |
 
 ### 7.1 Fabric (*R13*)
 
@@ -471,10 +471,15 @@ The code lives on GitHub. Deployment can run from **GitHub Actions or Azure DevO
   asset keys, example code location (lineage specs), Containerfile, Podman stack, CI for GitHub
   Actions and Azure DevOps.
 
-**Phase 2 — Connectors, components and lineage**
-- Snowflake → Databricks (Pipes) → Fabric (`FabricItemJob`,
-  `FabricSemanticModelRefresh`) → dbt (translator, source `asset_key` meta) → ADLS. Unit tests
-  with mocked APIs; opt-in integration tests against dev.
+**Phase 2 — Connectors, components and lineage** — *done*
+- Resources: `FabricResource` (item jobs, semantic model refresh, 429 retry), `DatabricksResource`
+  (run job), `SnowflakeResource` (External OAuth). All poll and cancel the remote job when the
+  Dagster run stops.
+- Components: `FabricItemJob`, `FabricSemanticModelRefresh`, `DatabricksJob`, `SnowflakeSql`,
+  and `CanonicalDbtProject` (dbt with canonical keys and an Entra token for the profile).
+- Tests use mocked APIs and a real dbt manifest (DuckDB stand-in). Opt-in integration tests
+  against dev come with the Phase 0 spikes, which need Azure access.
+- Not built: ADLS resource (nothing needs it yet), Databricks Pipes.
 
 **Phase 3 — Infra repo**
 - Setup/bootstrap, modules, Azure Policy, domain YAML → identities + grants with `terraform

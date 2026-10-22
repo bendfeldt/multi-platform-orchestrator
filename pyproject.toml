@@ -3,7 +3,14 @@
 members = ["libs/*", "code_locations/*"]
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.14", "pyright>=1.1.400"]
+dev = [
+    "pytest>=8",
+    "ruff>=0.14",
+    "pyright>=1.1.400",
+    "responses>=0.26.3",
+    "dbt-core>=1.10",
+    "dbt-duckdb>=1.9",
+]
 
 [tool.ruff]
 line-length = 100

@@ -48,8 +48,16 @@ class Databricks(BaseModel):
     host: str
 
 
+class SnowflakeDomain(BaseModel):
+    role: str
+    warehouse: str
+
+
 class Snowflake(BaseModel):
     account: str
+    # Application ID URI scope of the Entra app trusted by Snowflake External OAuth.
+    oauth_scope: str
+    domains: dict[str, SnowflakeDomain]
 
 
 class Fabric(BaseModel):

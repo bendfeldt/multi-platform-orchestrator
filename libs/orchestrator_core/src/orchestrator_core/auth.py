@@ -17,8 +17,13 @@ def _credential() -> TokenCredential:
     return AzureCliCredential()
 
 
+def get_token(scope: str) -> str:
+    """A short-lived Entra token; azure-identity caches and refreshes it."""
+    return _credential().get_token(scope).token
+
+
 class AzureCredentialResource(dg.ConfigurableResource):
-    """Hands out short-lived Entra tokens; azure-identity caches and refreshes them."""
+    """Entra tokens for asset code that calls an Azure API directly."""
 
     def get_token(self, scope: str) -> str:
-        return _credential().get_token(scope).token
+        return get_token(scope)
