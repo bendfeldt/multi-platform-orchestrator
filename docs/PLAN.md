@@ -1,8 +1,9 @@
 # Multi-Platform Orchestrator — Implementation Plan
 
-Status: **v8**. Implemented in this repo: Phase 1 (skeleton), Phase 2 (connectors, components,
-dbt) and Phase 4 (app deployment), tested against mocked platform APIs and a local Postgres.
-Not yet run against Azure: Phase 0 spikes, Phase 3 (infra repo), Phases 5–6. All findings of
+Status: **v8**. Implemented: Phases 1, 2 and 4 in this repo, and Phase 3 (Terraform) on the
+`infra` branch, which becomes the infra repo once it exists. Everything is tested against
+mocked platform APIs and providers and a local Postgres; nothing has run against Azure yet
+(Phase 0 spikes, Phases 5–6). All findings of
 [PLAN_REVIEW.md](PLAN_REVIEW.md) are applied (marked *R1*–*R16* below).
 
 ## 1. Goal
@@ -173,12 +174,10 @@ via RBAC by the app deployer):
 
 ### 3.2 Modularity inside each repo
 
-- **Infra**: small Terraform modules (`network`, `aca_env`, `frontdoor`, `postgres`, `acr`,
-  `storage`, `monitoring`, `entra`, `identity`, `policy`, `access_databricks`,
-  `access_snowflake`, `access_fabric`, `contract`). Each domain is declared
-  once in a `domains/<name>.yaml` file (which platforms, catalogs/schemas/workspaces, read vs
-  write); Terraform derives the identity and every grant from it. Adding a domain = one YAML
-  file.
+- **Infra**: `bootstrap/` (run once by a person), one `environment/` root applied per
+  environment with `envs/<env>.tfvars`, and one module, `domain_access`, that turns
+  `domains/<env>/<name>.yaml` (platforms, schemas/workspaces, read vs write) into the domain's
+  identity and every grant. Adding a domain = one YAML file per environment.
 - **Solution**: `orchestrator_core` (auth, resources, asset keys) is a library with no knowledge
   of specific domains. Platform integrations are **Dagster Components** (YAML-configured,
   reusable). Each domain is an independent code location with its own image and identity;
@@ -278,20 +277,19 @@ Each environment root module takes `subscription_id` and `resource_group_name` i
 
 ### 5.4 Setup inputs
 
-A `setup` script in the infra repo asks for (or reads from a `setup.yaml`) and writes
-`envs/<env>/terraform.tfvars`:
+`bootstrap/bootstrap.tfvars` holds the one-time inputs: tenant, subscription per environment
+(or the same one three times), **location** (optional, default `westeurope`), naming prefix and
+the CI systems (GitHub repo names and/or the ADO organization and project). Bootstrap creates
+the state and contract storage (Entra auth only, public endpoint so hosted CI runners can
+reach it), the shared Front Door profile, each environment's resource group and image policy,
+and the federated deployers. It is the only step run by a person with elevated rights; its
+outputs go into `environment/envs/<env>.tfvars` with the platform settings (Databricks URL,
+Snowflake account, Entra groups).
 
-- tenant ID, subscription ID per env (or one shared), resource-group names
-- **location** — optional, default `westeurope`
-- naming prefix; CI provider(s) (`github`, `ado` or both) with GitHub repo names and/or ADO
-  organization/project/service-connection names (for the federated credentials)
-- custom domain names per environment, SKUs (§6.3)
-- existing Databricks workspace URLs, Snowflake account per env, Fabric workspace IDs
-- Entra group object IDs for Viewers / Operators (or create them)
-
-It then bootstraps the Terraform state + contract storage account (Entra auth only, shared keys
-disabled, public endpoint so hosted CI runners can reach it) and the deployer identities with
-their federated credentials. Bootstrap is the only step run by a human with elevated rights.
+Platform admins do a few things once (infra README): Snowflake `bootstrap.sql`, Databricks
+workspace admin for the infra deployer, Fabric workspace admin. **Databricks job permissions
+are not managed by Terraform**: `databricks_permissions` replaces a job's whole ACL, so job
+owners grant `CAN_MANAGE_RUN` to the domain's service principal.
 
 ## 6. Networking, ingress and cost
 
@@ -490,9 +488,14 @@ The code lives on GitHub. Deployment can run from **GitHub Actions or Azure DevO
   against dev come with the Phase 0 spikes, which need Azure access.
 - Not built: ADLS resource (nothing needs it yet), Databricks Pipes.
 
-**Phase 3 — Infra repo**
-- Setup/bootstrap, modules, Azure Policy, domain YAML → identities + grants with `terraform
-  test`, contract publishing, GitHub Actions and ADO pipelines. Dev first, then test and prod.
+**Phase 3 — Infra repo** — *done on the `infra` branch, not yet applied*
+- `bootstrap/`, `environment/`, `modules/domain_access`, domain YAML, Snowflake bootstrap SQL,
+  GitHub and ADO pipelines over shared scripts.
+- `terraform test` with mocked providers (12 runs): read access never writes, grants match the
+  domain file, no admin rights for domain identities, nothing public except through Front
+  Door, no passwords or keys, narrow control-plane roles, viewers cannot sign in to the full
+  webserver, federated credentials bound to one repo and environment. Trivy config scan in CI.
+- Validated with azurerm 5.10, azuread 3.10, databricks 1.139, snowflake 2.22, fabric 1.14.
 
 **Phase 4 — App deployment** — *done, not yet run against Azure*
 - `deploy/render.py` turns the contract + image digests into Container Apps and Jobs; tests
@@ -531,5 +534,6 @@ Phases 1–2 need no Azure access and can start immediately.
 
 ## 12. Open items
 
-1. Create the GitHub repo `bendfeldt/multi-platform-orchestrator-infra` (the session's GitHub
-   integration may not create repositories, so it has to be created by hand).
+1. Create the GitHub repo `bendfeldt/multi-platform-orchestrator-infra` (this session's GitHub
+   integration may not create repositories), then move the `infra` branch there:
+   `git push <infra-repo-url> origin/infra:main` and delete the branch here.
