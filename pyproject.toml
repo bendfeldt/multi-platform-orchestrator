@@ -10,6 +10,7 @@ dev = [
     "responses>=0.26.3",
     "dbt-core>=1.10",
     "dbt-duckdb>=1.9",
+    "shellcheck-py>=0.11.0.1",
 ]
 
 [tool.ruff]
@@ -20,10 +21,12 @@ target-version = "py313"
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.pyright]
-include = ["libs", "code_locations"]
+include = ["libs", "code_locations", "deploy"]
+extraPaths = ["deploy"]
 venvPath = "."
 venv = ".venv"
 pythonVersion = "3.13"
 
 [tool.pytest.ini_options]
-testpaths = ["libs", "code_locations"]
+testpaths = ["libs", "code_locations", "deploy"]
+pythonpath = ["deploy"]

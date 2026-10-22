@@ -9,8 +9,12 @@ storage:
       port: 5432
 
 # Default run launcher: each run is a process in its code-location container.
-run_queue:
-  max_concurrent_runs: 5
+concurrency:
+  runs:
+    max_concurrent_runs: 5
+  # One pool per platform (components set pool=<platform>).
+  pools:
+    default_limit: 10
 
 telemetry:
   enabled: false

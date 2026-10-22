@@ -1,0 +1,40 @@
+# Copies dev's image digests into this environment's ACR and deploys them.
+parameters:
+  - name: environment
+    type: string
+  - name: dependsOn
+    type: object
+  - name: serviceConnection
+    type: string
+
+stages:
+  - stage: ${{ parameters.environment }}
+    dependsOn: ${{ parameters.dependsOn }}
+    variables:
+      - group: mpo-${{ parameters.environment }}
+      - name: sourceImages
+        value: $[ stageDependencies.dev.deploy.outputs['deploy.push.images'] ]
+    jobs:
+      - deployment: deploy
+        environment: mpo-${{ parameters.environment }}
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  persistCredentials: false
+                - template: install-uv.yml
+                - task: AzureCLI@2
+                  inputs:
+                    azureSubscription: ${{ parameters.serviceConnection }}
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      printf '%s' "$SOURCE_IMAGES" >source.json
+                      deploy/scripts/promote.sh source.json "$ACR_LOGIN_SERVER" images.json
+                      deploy/scripts/deploy.sh images.json
+                  env:
+                    SOURCE_IMAGES: $(sourceImages)
+                    ACR_LOGIN_SERVER: $(ACR_LOGIN_SERVER)
+                    CONTRACT_URL: $(CONTRACT_URL)

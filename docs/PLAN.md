@@ -1,7 +1,8 @@
 # Multi-Platform Orchestrator — Implementation Plan
 
-Status: **v8**. Phases 1 (solution skeleton) and 2 (connectors, components, dbt) are implemented and
-tested against mocked platform APIs; everything else is planned. All findings of
+Status: **v8**. Implemented in this repo: Phase 1 (skeleton), Phase 2 (connectors, components,
+dbt) and Phase 4 (app deployment), tested against mocked platform APIs and a local Postgres.
+Not yet run against Azure: Phase 0 spikes, Phase 3 (infra repo), Phases 5–6. All findings of
 [PLAN_REVIEW.md](PLAN_REVIEW.md) are applied (marked *R1*–*R16* below).
 
 ## 1. Goal
@@ -98,12 +99,16 @@ A failed migration stops the deploy before any app changes.
 
 ### 2.3 Run concurrency (*R8*)
 
-Run queue limits in `dagster.yaml` (`run_coordinator: QueuedRunCoordinator`):
+Limits in `dagster.yaml`:
 
-- `max_concurrent_runs`: 5 in dev/test, 20 in prod (Postgres B1ms allows ~50 connections,
-  B2s more).
-- `tag_concurrency_limits` per platform (e.g. `platform: databricks` ≤ 10), so a backfill on one
-  platform cannot take every slot and Azure management calls stay below throttling limits.
+- `concurrency.runs.max_concurrent_runs: 10` in every environment. Dagster reads it as a fixed
+  number, and the same image runs everywhere; 10 stays well inside Postgres B1ms's ~50
+  connections.
+- One concurrency **pool per platform** (`pool=<platform>` on every component, default limit 10),
+  so a backfill on one platform cannot take every slot.
+- Known limit: the ACA launcher blocks the daemon for 30–50 s per launch while Azure creates
+  the Job, so launches are serial — a 100-partition backfill needs ~1 h just to start. Spike A
+  measures it; AKS is the fallback if that is too slow.
 
 ### 2.4 Local runtime (*R11*)
 
@@ -239,11 +244,11 @@ practice:
 | Identity | Used by | Gets access to | Explicitly NOT |
 |---|---|---|---|
 | `id-dagster-platform-<env>` | daemon | Postgres `dagster_rw`; create/start/stop ACA Jobs in its RG (custom role); `Managed Identity Operator` on the domain identities (needed to attach them to run Jobs); ACR pull | Any data platform; schema changes |
-| `id-dagster-web-<env>` | both webservers | Postgres `dagster_rw`, ACR pull | Data platforms, ACA Jobs |
+| `id-dagster-web-<env>` | both webservers | Postgres `dagster_rw`, ACR pull, read the compute-log container (logs in the UI) | Data platforms, ACA Jobs |
 | `id-dagster-admin-<env>` | admin jobs (§2.2) | Postgres Entra admin (schema owner, creates principals); delete ACA Jobs in its RG; ACR pull | Data platforms |
 | `id-cl-<domain>-<env>` | that domain's code-location server **and** its run Jobs (*R1*, *R2*) | That domain's objects only (from `domains/<name>.yaml`); Postgres `dagster_rw`; ACR pull; compute-log container | Other domains' data; schema changes |
 | `infra-deployer-<env>` | infra pipeline | Terraform apply for that env | Other environments |
-| `app-deployer-<env>` | solution pipeline | ACR push; container app/job updates in that env's RG; start `job-dagster-migrate`; read contract | Network, identities, grants, other envs |
+| `app-deployer-<env>` | solution pipeline | ACR push; container app/job updates and Easy Auth settings in that env's RG; start `job-dagster-migrate`; read contract; test/prod: `AcrPull` on the dev ACR to copy images | Network, identities, grants, writing to other envs |
 
 Deployer identities are Entra apps with federated credentials (GitHub OIDC and/or ADO workload
 identity). Platform permissions are granted to Entra security groups containing the UAMIs.
@@ -459,12 +464,17 @@ The code lives on GitHub. Deployment can run from **GitHub Actions or Azure DevO
 
 **Phase 0 — Spikes (dev)**
 - A: `AcaRunLauncher` + per-code-location UAMI, incl. code-location server identity, `dagster_rw`
-  Postgres login and the cleanup job (fallback AKS).
-- B: Snowflake WIF from an ACA Job MI.
+  Postgres login (verified locally: runs work without DDL rights, DDL is refused), the cleanup
+  job, gRPC from webserver/daemon to `cl-<domain>` on port 80 (HTTP/2), and launch time per run
+  (fallback AKS).
+- B: Snowflake External OAuth with a managed-identity token (user mapping by `sub`), and WIF as
+  the alternative.
 - C: Fabric pipeline/notebook run + semantic model refresh with an MI.
 - D: dbt adapters with MI tokens.
 - E: Front Door Premium → Private Link → internal ACA environment, Easy Auth with two Entra
-  apps behind Front Door (forwarded host, redirects, probes off).
+  apps behind Front Door (forwarded host, redirects, probes off). Confirm the
+  `az containerapp auth` flags in `deploy/scripts/deploy.sh` and sign-in without a client
+  secret.
 
 **Phase 1 — Solution skeleton (this repo)** — *done*
 - uv workspace, lint/type/test, contract model + loader, `AzureCredentialResource`, canonical
@@ -485,9 +495,15 @@ The code lives on GitHub. Deployment can run from **GitHub Actions or Azure DevO
 - Setup/bootstrap, modules, Azure Policy, domain YAML → identities + grants with `terraform
   test`, contract publishing, GitHub Actions and ADO pipelines. Dev first, then test and prod.
 
-**Phase 4 — App deployment**
-- Contract-driven ACA templates, admin jobs (migrate, cleanup), queue limits, deploy scripts,
-  image promotion, GitHub Actions and ADO pipelines.
+**Phase 4 — App deployment** — *done, not yet run against Azure*
+- `deploy/render.py` turns the contract + image digests into Container Apps and Jobs; tests
+  check every container's identity and that only the webservers are reachable from Front Door.
+- `dagster.azure.yaml` (Entra login to Postgres, `AcaRunLauncher`, run and pool limits, Blob
+  compute logs) and `dagster.admin.yaml` (the only config that may create tables), both
+  validated against Dagster's config schema.
+- Admin jobs `migrate` and `cleanup` (`orchestrator_core.admin`); migrate verified on Postgres.
+- `deploy/scripts/{push,promote,deploy}.sh`; GitHub `deploy.yml` + `promote.yml`; ADO
+  `deploy.yml` + templates. Build once in dev, promote the same digests.
 
 **Phase 5 — End-to-end example** (§4.3) in dev, with checks and alerts.
 

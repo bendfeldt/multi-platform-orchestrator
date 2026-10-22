@@ -31,6 +31,24 @@ podman compose -f local/compose.yaml up --build   # UI at http://127.0.0.1:3000
 For work that calls real dev platforms, run Dagster on your machine so it can use your
 `az login`: `uv run dagster dev -m example_sales.definitions`.
 
+## Deploy
+
+Pushing to `main` runs CI, builds the images once, deploys to dev, then promotes the same image
+digests to test and prod after approval. Either CI system works:
+
+- **GitHub Actions** (`.github/workflows/deploy.yml`): create environments `dev`, `test`, `prod`
+  with the variables `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`,
+  `ACR_LOGIN_SERVER`, `CONTRACT_URL`, and required reviewers on test and prod.
+- **Azure DevOps** (`.azuredevops/pipelines/deploy.yml`): service connections `mpo-dev`,
+  `mpo-test`, `mpo-prod` (workload identity federation), environments `mpo-<env>` with
+  approvals, and variable groups `mpo-<env>` with `ACR_LOGIN_SERVER`, `CONTRACT_URL`.
+
+No secrets in either: Azure login is federated, and the variables are IDs and URLs. The infra
+repo creates the identities and publishes each environment's contract at `CONTRACT_URL`.
+
+`deploy/scripts/deploy.sh` renders the apps from the contract (`deploy/render.py`), runs the
+in-VNet migrate job, then updates code servers, daemon, webservers and the cleanup job.
+
 ## Add a domain
 
 1. Copy `code_locations/example_sales` to `code_locations/<domain>` and rename the package.

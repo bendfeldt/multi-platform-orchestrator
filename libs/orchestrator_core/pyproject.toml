@@ -13,6 +13,7 @@ dependencies = [
     "databricks-sdk>=0.70",
     "snowflake-connector-python>=3.17",
     "requests>=2.32",
+    "dagster-azure[container-apps]==0.29.26",
 ]
 
 [project.optional-dependencies]

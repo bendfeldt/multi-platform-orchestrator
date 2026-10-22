@@ -2,8 +2,8 @@ name: ci
 
 on:
   pull_request:
-  push:
-    branches: [main]
+  # deploy.yml runs these checks before deploying from main.
+  workflow_call:
 
 # Pull requests never get a cloud login (docs/PLAN.md §9): no id-token permission here.
 permissions:

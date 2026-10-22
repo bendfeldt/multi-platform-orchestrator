@@ -1,8 +1,5 @@
 # Same checks as .github/workflows/ci.yml; all logic lives in deploy/scripts.
-# No service connection: pull requests never get a cloud login (docs/PLAN.md §9).
-trigger:
-  branches:
-    include: [main]
+trigger: none
 
 pr:
   branches:
@@ -12,20 +9,4 @@ pool:
   vmImage: ubuntu-24.04
 
 jobs:
-  - job: check
-    steps:
-      - checkout: self
-        persistCredentials: false
-      - script: |
-          pipx install uv==0.11.32
-          echo "##vso[task.prependpath]$HOME/.local/bin"
-        displayName: Install uv
-      - script: deploy/scripts/ci.sh
-        displayName: Checks
-
-  - job: build
-    steps:
-      - checkout: self
-        persistCredentials: false
-      - script: deploy/scripts/build.sh ci
-        displayName: Build images
+  - template: ci-jobs.yml

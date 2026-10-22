@@ -18,8 +18,12 @@ COPY code_locations code_locations
 
 ARG SYNC_ARGS="--package example-sales"
 RUN uv sync --frozen --no-dev --no-editable $SYNC_ARGS \
-    && useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin dagster \
-    && mkdir -p "$DAGSTER_HOME" \
-    && chown dagster "$DAGSTER_HOME"
+    && useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin dagster
+
+# Azure config is baked in; the local stack mounts its own over it. The admin migrate job
+# uses DAGSTER_HOME=/opt/dagster/admin (the only config allowed to create tables).
+COPY --chown=10001 deploy/dagster.azure.yaml /opt/dagster/home/dagster.yaml
+COPY --chown=10001 deploy/dagster.admin.yaml /opt/dagster/admin/dagster.yaml
+COPY deploy/workspace.azure.yaml /opt/dagster/workspace.yaml
 
 USER 10001

@@ -1,0 +1,16 @@
+# Pull-request checks; no service connection, so no cloud login (docs/PLAN.md §9).
+jobs:
+  - job: check
+    steps:
+      - checkout: self
+        persistCredentials: false
+      - template: install-uv.yml
+      - script: deploy/scripts/ci.sh
+        displayName: Checks
+
+  - job: build
+    steps:
+      - checkout: self
+        persistCredentials: false
+      - script: deploy/scripts/build.sh ci
+        displayName: Build images

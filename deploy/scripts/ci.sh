@@ -7,6 +7,7 @@ uv sync --frozen --all-packages --all-extras
 uv run ruff format --check .
 uv run ruff check .
 uv run pyright
+uv run shellcheck deploy/scripts/*.sh
 uv run pytest -q
 for location in code_locations/*/src/*/definitions.py; do
   module="$(basename "$(dirname "$location")").definitions"

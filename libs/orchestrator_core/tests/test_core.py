@@ -46,7 +46,7 @@ def test_credential_follows_runtime(monkeypatch, env, expected):
 
 def test_contract_fixture_loads():
     contract = load_contract(FIXTURE)
-    assert contract.identities.domains["sales"].client_id
+    assert contract.identities.domains["example_sales"].client_id
 
 
 def test_contract_rejects_unknown_schema_version(tmp_path):

@@ -33,7 +33,10 @@ class _PlatformJob(dg.Component, dg.Model, dg.Resolvable):
             for key in self.writes
         ]
 
-        @dg.multi_asset(name=self.name, specs=specs, required_resource_keys={self.resource_key})
+        # pool: one concurrency pool per platform, so a backfill cannot flood one platform.
+        @dg.multi_asset(
+            name=self.name, specs=specs, required_resource_keys={self.resource_key}, pool=self.kind
+        )
         def _job(context: dg.AssetExecutionContext):
             metadata = self.run(getattr(context.resources, self.resource_key))
             for spec in specs:
