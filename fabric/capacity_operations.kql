@@ -1,0 +1,19 @@
+// Run once in the KQL database that holds the Fabric capacity operation events (a database
+// admin; the Eventhouse and eventstream are made by a capacity admin, not by Terraform):
+//   Real-Time hub > Fabric events > Fabric capacity operation events > Create eventstream,
+//   destination Eventhouse, table FabricCapacityOperations.
+// The cost report (solution repo, orchestrator_core/cost.py) reads only this function. It
+// assumes the event's `data` object landed in one dynamic column; if "Edit columns" flattened
+// it, replace `['data'].x` with the column names. Lower-case IDs: the report matches on them.
+.create-or-alter function with (folder = "mpo", docstring = "Fabric capacity operations for the Dagster cost report")
+MpoCapacityOperations() {
+    FabricCapacityOperations
+    | where type == "Microsoft.Fabric.CapacityOperationEvents.Operation"
+    | project
+        OperationId = tolower(tostring(['data'].operationId)),
+        WorkspaceId = tolower(tostring(['data'].workspaceId)),
+        ItemId = tolower(tostring(['data'].itemId)),
+        OperationStartTime = todatetime(['data'].operationStartTime),
+        CapacityUnitMs = todouble(['data'].capacityUnitMs),
+        ReleaseType = tostring(['data'].releaseType)
+}

@@ -380,3 +380,29 @@ run "an_existing_cost_warehouse_is_used_as_given" {
     error_message = "With a given warehouse Terraform creates none and changes no permissions."
   }
 }
+
+run "fabric_capacity_events_reach_the_contract_as_given" {
+  command = plan
+
+  variables {
+    fabric_capacity_events = {
+      query_uri         = "https://trd-1.z0.kusto.fabric.microsoft.com"
+      database          = "capacity"
+      cu_hour_price_usd = 0.2
+    }
+  }
+
+  assert {
+    condition     = local.contract.platforms.fabric.capacity_events.database == "capacity" && local.contract.platforms.fabric.capacity_events.cu_hour_price_usd == 0.2
+    error_message = "The contract hands mpo_ops the Eventhouse it reads."
+  }
+}
+
+run "no_fabric_cost_settings_without_an_eventhouse" {
+  command = plan
+
+  assert {
+    condition     = local.contract.platforms.fabric == null
+    error_message = "Without fabric_capacity_events the contract has no Fabric cost settings."
+  }
+}

@@ -10,6 +10,7 @@
     "SnowflakeCredits": "real",
     "DatabricksDbus": "real",
     "DatabricksListCost": "real",
+    "FabricCuSeconds": "real",
     "CostUsd": "real",
     "UnattributedSnowflakeCredits": "real"
   },

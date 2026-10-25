@@ -10,7 +10,7 @@ for root in modules/domain_access environment bootstrap; do
   (cd "$root" && terraform init -input=false -backend=false >/dev/null && terraform validate && terraform test)
 done
 if command -v node >/dev/null; then
-  echo "== KQL (alert rules, workbook)"
+  echo "== KQL (alert rules, workbook, Fabric function)"
   scripts/check-kql.sh
 fi
 if command -v trivy >/dev/null; then

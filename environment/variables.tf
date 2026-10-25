@@ -122,3 +122,14 @@ variable "alerts_file" {
   type        = string
   default     = null
 }
+
+variable "fabric_capacity_events" {
+  description = "Eventhouse with Fabric capacity operation events (made outside Terraform, fabric/capacity_operations.kql) for the cost report; null if unused."
+  type = object({
+    query_uri = string # the KQL database's Query URI
+    database  = string
+    # Your capacity's price per CU hour, for Fabric cost in USD; without it cost is in CU.
+    cu_hour_price_usd = optional(number)
+  })
+  default = null
+}

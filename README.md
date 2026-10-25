@@ -18,6 +18,7 @@ credential or a managed identity.
 | `alerts/<env>.yaml` | Who is notified about which Dagster alerts, and how | People, by pull request |
 | `snowflake/bootstrap.sql` | The infra pipeline's Snowflake login (workload identity) | A Snowflake admin, once per account |
 | `snowflake/cost_access.sql` | Lets mpo_ops read Snowflake's cost attribution | A Snowflake admin, once per environment |
+| `fabric/capacity_operations.kql` | The function the cost report reads Fabric capacity events through | A KQL database admin, once |
 | `scripts/` | `ci.sh`, `apply.sh`, `install-tools.sh`, called by both CI systems; `check-kql.sh` parses the alert queries | |
 
 ## Set up (once)
@@ -52,6 +53,12 @@ credential or a managed identity.
      cost in USD. `databricks_cost_warehouse_id` reuses an existing SQL warehouse (its owner
      gives mpo_ops `CAN_USE`); otherwise Terraform creates a 2X-Small serverless one that stops
      10 minutes after the daily query.
+   - Fabric cost (optional): a capacity admin creates an Eventhouse in a workspace of its own
+     and an eventstream from Real-Time hub "Fabric capacity operation events" into table
+     `FabricCapacityOperations` (not in Terraform); run `fabric/capacity_operations.kql` in
+     that KQL database; set `fabric_capacity_events` (Query URI, database, price per CU hour)
+     in `envs/<env>.tfvars`; uncomment the Viewer grant in `domains/<env>/mpo_ops.yaml`. The
+     grant is on the whole workspace, so keep only the monitoring Eventhouse there.
 3. **Environment values**: copy the bootstrap outputs into `environment/envs/<env>.tfvars`
    (and the dev file's `acr_pull_principal_ids` with the test and prod app deployers).
 4. **CI**: environments `dev`, `test`, `prod` (GitHub) or `mpo-infra-<env>` (ADO) with approvals
@@ -64,8 +71,8 @@ credential or a managed identity.
 ## Day to day
 
 - Pull requests run `scripts/ci.sh`: format, validate, `terraform test` (mocked providers,
-  including the grant tests in `modules/domain_access/tests`), the alert and workbook
-  queries through Microsoft's Kusto parser, and a Trivy scan. No cloud login.
+  including the grant tests in `modules/domain_access/tests`), the alert, workbook and
+  Fabric queries through Microsoft's Kusto parser, and a Trivy scan. No cloud login.
 - Merging to `main` applies dev, then test and prod after approval.
 - **Add a domain**: add `domains/<env>/<name>.yaml` for each environment. Terraform creates
   its identity and exactly the listed grants, adds it to the contract, and creates the
@@ -99,3 +106,6 @@ credential or a managed identity.
 - Whether the infra role's `MANAGE GRANTS` may grant `SNOWFLAKE.USAGE_VIEWER` (then
   `cost_access.sql` moves into Terraform).
 - The workbook JSON rendering as intended (only its queries are checked in CI).
+- Querying the Eventhouse as mpo_ops's managed identity with workspace Viewer, and the
+  eventstream's table matching `fabric/capacity_operations.kql` (CI parses it against the
+  documented event shape).

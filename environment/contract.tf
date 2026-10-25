@@ -44,6 +44,9 @@ locals {
         domains          = { for name, domain in module.domain : name => domain.snowflake if domain.snowflake != null }
         credit_price_usd = var.snowflake.credit_price_usd
       }
+      fabric = var.fabric_capacity_events == null || !local.ops_domain ? null : {
+        capacity_events = var.fabric_capacity_events
+      }
     }
     insights = !local.ops_domain ? null : {
       ingestion_endpoint = azurerm_monitor_data_collection_rule.insights[0].logs_ingestion_endpoint
