@@ -1,0 +1,10 @@
+# Example IDs: replace with your Fabric workspace and pipeline IDs.
+type: orchestrator_core.components.FabricItemJob
+attributes:
+  name: ingest_orders
+  group_name: sales
+  workspace_id: 00000000-0000-0000-0000-000000000001
+  item_id: 00000000-0000-0000-0000-000000000002
+  job_type: Pipeline
+  writes:
+    - fabric/sales/lh_raw/dbo/orders

@@ -1,0 +1,20 @@
+# Local Podman stack. Azure config (Entra login to Postgres, AcaRunLauncher) comes in Phase 4.
+storage:
+  postgres:
+    postgres_db:
+      hostname: {env: DAGSTER_PG_HOST}
+      username: {env: DAGSTER_PG_USER}
+      password: {env: DAGSTER_PG_PASSWORD}
+      db_name: {env: DAGSTER_PG_DB}
+      port: 5432
+
+# Default run launcher: each run is a process in its code-location container.
+concurrency:
+  runs:
+    max_concurrent_runs: 5
+  # One pool per platform (components set pool=<platform>).
+  pools:
+    default_limit: 10
+
+telemetry:
+  enabled: false

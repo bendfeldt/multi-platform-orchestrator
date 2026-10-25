@@ -1,0 +1,9 @@
+type: orchestrator_core.components.DatabricksJob
+attributes:
+  name: silver_orders
+  group_name: sales
+  job_id: 123
+  reads:
+    - fabric/sales/lh_raw/dbo/orders
+  writes:
+    - databricks/sales/silver/orders

@@ -1,0 +1,5 @@
+# Deployment and pipeline changes need an owner's review.
+/containers/   @bendfeldt
+/deploy/       @bendfeldt
+/.github/      @bendfeldt
+/.azuredevops/ @bendfeldt

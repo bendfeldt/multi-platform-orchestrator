@@ -1,0 +1,16 @@
+# Admin migrate job only: the schema owner may create tables. Same database as
+# dagster.azure.yaml, nothing else.
+storage:
+  postgres:
+    postgres_db:
+      hostname: {env: DAGSTER_PG_HOST}
+      db_name: {env: DAGSTER_PG_DB}
+      username: {env: DAGSTER_PG_USER}
+      port: 5432
+      params:
+        sslmode: require
+    auth_provider:
+      azure_wif: {}
+
+telemetry:
+  enabled: false

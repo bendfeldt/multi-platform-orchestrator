@@ -1,0 +1,12 @@
+# Same checks as .github/workflows/ci.yml; all logic lives in deploy/scripts.
+trigger: none
+
+pr:
+  branches:
+    include: [main]
+
+pool:
+  vmImage: ubuntu-24.04
+
+jobs:
+  - template: ci-jobs.yml

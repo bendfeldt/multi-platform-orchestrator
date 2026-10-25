@@ -1,0 +1,62 @@
+# Azure instance config. Values come from environment variables the rendered container apps
+# set from the environment contract (deploy/render.py).
+storage:
+  postgres:
+    postgres_db:
+      hostname: {env: DAGSTER_PG_HOST}
+      db_name: {env: DAGSTER_PG_DB}
+      # Each container logs in as its own managed identity (docs/PLAN.md §2.1).
+      username: {env: DAGSTER_PG_USER}
+      port: 5432
+      params:
+        sslmode: require
+    auth_provider:
+      azure_wif: {}
+    # Only the admin migrate job changes tables (deploy/dagster.admin.yaml).
+    should_autocreate_tables: false
+
+run_launcher:
+  module: dagster_azure.container_apps
+  class: AcaRunLauncher
+  config:
+    subscription_id: {env: AZURE_SUBSCRIPTION_ID}
+    resource_group: {env: AZURE_RESOURCE_GROUP}
+    region: {env: AZURE_LOCATION}
+    environment_id: {env: ACA_ENVIRONMENT_ID}
+    # Copied from the daemon into every run Job; the domain identity, its database user and
+    # platform settings come from the code location's container context instead.
+    env_vars:
+      - DAGSTER_PG_HOST
+      - DAGSTER_PG_DB
+      - AZURE_SUBSCRIPTION_ID
+      - AZURE_RESOURCE_GROUP
+      - AZURE_LOCATION
+      - ACA_ENVIRONMENT_ID
+      - COMPUTE_LOG_ACCOUNT
+      - COMPUTE_LOG_CONTAINER
+    run_resources:
+      cpu: "0.5"
+      memory: 1Gi
+
+concurrency:
+  runs:
+    # Not settable per environment; 10 stays well inside Postgres B1ms's ~50 connections.
+    max_concurrent_runs: 10
+  # One pool per platform (components set pool=<platform>).
+  pools:
+    default_limit: 10
+
+run_monitoring:
+  enabled: true
+
+compute_logs:
+  module: dagster_azure.blob.compute_log_manager
+  class: AzureBlobComputeLogManager
+  config:
+    storage_account: {env: COMPUTE_LOG_ACCOUNT}
+    container: {env: COMPUTE_LOG_CONTAINER}
+    default_azure_credential: {}
+    prefix: dagster-logs
+
+telemetry:
+  enabled: false

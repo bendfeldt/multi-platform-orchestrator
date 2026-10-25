@@ -1,0 +1,8 @@
+version: 2
+sources:
+  - name: silver
+    tables:
+      - name: orders
+        meta:
+          dagster:
+            asset_key: ["databricks", "sales", "silver", "orders"]

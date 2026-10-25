@@ -1,0 +1,5 @@
+steps:
+  - script: |
+      pipx install uv==0.11.32
+      echo "##vso[task.prependpath]$HOME/.local/bin"
+    displayName: Install uv

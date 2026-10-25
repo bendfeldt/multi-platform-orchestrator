@@ -1,0 +1,28 @@
+[project]
+name = "orchestrator-core"
+version = "0.1.0"
+description = "Shared Entra auth, asset keys and environment contract for the orchestrator"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "dagster==1.13.26",
+    "dagster-postgres==0.29.26",
+    "azure-identity>=1.26,<2",
+    # shortcut: SQLAlchemy 2.1 defaults to psycopg 3 but dagster-postgres ships psycopg2;
+    # lift once dagster-postgres supports 2.1.
+    "sqlalchemy>=2.0,<2.1",
+    "databricks-sdk>=0.70",
+    "snowflake-connector-python>=3.17",
+    "requests>=2.32",
+    "dagster-azure[container-apps]==0.29.26",
+]
+
+[project.optional-dependencies]
+# Only the webserver/daemon image needs the UI.
+webserver = ["dagster-webserver==1.13.26"]
+dbt = [
+    "dagster-dbt==0.29.26",
+]
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"

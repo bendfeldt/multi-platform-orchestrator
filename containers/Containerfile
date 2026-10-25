@@ -1,0 +1,29 @@
+# One Containerfile for every image; SYNC_ARGS picks what gets installed:
+#   platform (webserver + daemon): --package orchestrator-core --extra webserver
+#   code location:                 --package example-sales
+FROM python:3.13-slim
+
+COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /usr/local/bin/uv
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never \
+    PATH="/app/.venv/bin:$PATH" \
+    DAGSTER_HOME=/opt/dagster/home
+
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+COPY libs libs
+COPY code_locations code_locations
+
+ARG SYNC_ARGS="--package example-sales"
+RUN uv sync --frozen --no-dev --no-editable $SYNC_ARGS \
+    && useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin dagster
+
+# Azure config is baked in; the local stack mounts its own over it. The admin migrate job
+# uses DAGSTER_HOME=/opt/dagster/admin (the only config allowed to create tables).
+COPY --chown=10001 deploy/dagster.azure.yaml /opt/dagster/home/dagster.yaml
+COPY --chown=10001 deploy/dagster.admin.yaml /opt/dagster/admin/dagster.yaml
+COPY deploy/workspace.azure.yaml /opt/dagster/workspace.yaml
+
+USER 10001

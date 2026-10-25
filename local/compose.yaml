@@ -1,0 +1,57 @@
+# podman compose -f local/compose.yaml up --build
+name: mpo
+
+x-dagster: &dagster
+  environment:
+    DAGSTER_PG_HOST: postgres
+    DAGSTER_PG_USER: dagster
+    DAGSTER_PG_PASSWORD: dagster # local throwaway database only
+    DAGSTER_PG_DB: dagster
+  volumes:
+    - ../deploy/dagster.local.yaml:/opt/dagster/home/dagster.yaml:ro,Z
+    - ../deploy/workspace.local.yaml:/opt/dagster/home/workspace.yaml:ro,Z
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+x-platform-build: &platform-build
+  context: ..
+  dockerfile: containers/Containerfile
+  args:
+    SYNC_ARGS: --package orchestrator-core --extra webserver
+
+services:
+  postgres:
+    image: docker.io/library/postgres:17
+    environment:
+      POSTGRES_USER: dagster
+      POSTGRES_PASSWORD: dagster
+      POSTGRES_DB: dagster
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dagster"]
+      interval: 2s
+      retries: 30
+
+  code-example-sales:
+    <<: *dagster
+    build:
+      context: ..
+      dockerfile: containers/Containerfile
+      args:
+        SYNC_ARGS: --package example-sales
+    image: localhost/mpo-example-sales:local
+    command: dagster code-server start -h 0.0.0.0 -p 4000 -m example_sales.definitions
+
+  webserver:
+    <<: *dagster
+    build: *platform-build
+    image: localhost/mpo-platform:local
+    command: dagster-webserver -h 0.0.0.0 -p 3000 -w /opt/dagster/home/workspace.yaml
+    ports:
+      - "127.0.0.1:3000:3000"
+
+  daemon:
+    <<: *dagster
+    build: *platform-build
+    image: localhost/mpo-platform:local
+    command: dagster-daemon run -w /opt/dagster/home/workspace.yaml
