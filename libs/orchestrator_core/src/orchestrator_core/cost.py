@@ -259,7 +259,7 @@ def fetch_databricks_costs(
         error = response.status.error if response.status else None
         raise RuntimeError(f"Databricks cost query {statement_id} failed: {error}")
 
-    rows: list[list[str | None]] = []
+    rows: list[list[Any]] = []
     chunk = response.result
     while chunk is not None:
         rows.extend(chunk.data_array or [])

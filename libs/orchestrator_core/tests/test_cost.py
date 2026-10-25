@@ -3,6 +3,7 @@ only the platforms' answers are stand-ins."""
 
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import dagster as dg
 import pytest
@@ -273,7 +274,7 @@ class _Statements:
         pass
 
 
-def _databricks(statements):
+def _databricks(statements) -> Any:
     client = type("C", (), {"statement_execution": statements, "get_workspace_id": lambda s: 77})
     return type("R", (), {"client": lambda s: client()})()
 
@@ -322,5 +323,6 @@ def test_snowflake_cost_query_reads_only_this_repos_tags():
 
     start = datetime(2026, 10, 23, tzinfo=UTC)
     end = datetime(2026, 10, 24, tzinfo=UTC)
-    assert cost.fetch_snowflake_credits(_Snowflake(), start, end) == {'{"mpo_run":"r"}': 1.5}
+    snowflake: Any = _Snowflake()
+    assert cost.fetch_snowflake_credits(snowflake, start, end) == {'{"mpo_run":"r"}': 1.5}
     assert seen["prefix"] == '{"mpo_run":' and seen["start"] == datetime(2026, 10, 22, tzinfo=UTC)
