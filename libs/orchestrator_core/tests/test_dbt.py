@@ -1,3 +1,4 @@
+import json
 import shutil
 import subprocess
 import sys
@@ -57,16 +58,25 @@ def test_dbt_models_get_canonical_keys_and_cross_platform_deps(tmp_path):
             assert graph.get(stg).parent_keys == {
                 dg.AssetKey(["databricks", "sales", "silver", "orders"])
             }
+    # The query-tag macro (dbt_macros/) parses and overrides dbt-snowflake's.
+    manifest = json.loads((project / "target" / "manifest.json").read_text())
+    assert {"macro.test_project.snowflake__set_query_tag",
+            "macro.test_project.snowflake__unset_query_tag"} <= set(manifest["macros"])  # fmt: skip
+    shipped = Path(__file__).parents[1] / "dbt_macros" / "mpo_query_tag.sql"
+    assert (PROJECT / "macros" / "mpo_query_tag.sql").read_text() == shipped.read_text()
 
 
-def test_dbt_gets_a_token_only_while_it_runs(monkeypatch):
+def test_dbt_gets_a_token_and_query_tag_only_while_it_runs(monkeypatch):
     import os
 
     from orchestrator_core import dbt
 
     monkeypatch.setattr(dbt, "get_token", lambda scope: f"token-for-{scope}")
-    with dbt._token_env("databricks"):
+    with dbt._run_env("databricks", "tag"):
         assert os.environ["DATABRICKS_TOKEN"].startswith("token-for-2ff814a6")
+        assert "MPO_QUERY_TAG" not in os.environ  # query tags are Snowflake's
     assert "DATABRICKS_TOKEN" not in os.environ
-    with dbt._token_env("snowflake"):  # workload identity: nothing to hand over
+    with dbt._run_env("snowflake", "tag"):  # workload identity: no token to hand over
         assert "SNOWFLAKE_TOKEN" not in os.environ
+        assert os.environ["MPO_QUERY_TAG"] == "tag"
+    assert "MPO_QUERY_TAG" not in os.environ

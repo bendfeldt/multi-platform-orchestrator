@@ -144,6 +144,26 @@ def test_snowflake_uses_workload_identity_in_azure(monkeypatch, in_azure, expect
     assert expected.items() <= seen.items() and "token" not in seen and seen["closed"]
 
 
+def test_snowflake_query_tag_is_a_session_parameter(monkeypatch):
+    seen = {}
+
+    class _Connection:
+        def execute_string(self, sql):
+            return []
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        snowflake.snowflake.connector, "connect", lambda **kw: seen.update(kw) or _Connection()
+    )
+    resource = SnowflakeResource(account="a", warehouse="w", role="r")
+    resource.execute("select 1", query_tag='{"mpo_run":"r"}')
+    assert seen["session_parameters"] == {"QUERY_TAG": '{"mpo_run":"r"}'}
+    resource.execute("select 1")
+    assert seen["session_parameters"] is None
+
+
 def test_yaml_component_materializes_what_it_writes():
     from pathlib import Path
 

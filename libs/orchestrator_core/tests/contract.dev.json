@@ -23,10 +23,18 @@
   },
   "ingress": { "hostname": "dagster-dev.example.com" },
   "platforms": {
-    "databricks": { "host": "https://adb-0000000000000000.0.azuredatabricks.net" },
+    "databricks": { "host": "https://adb-0000000000000000.0.azuredatabricks.net", "cost_warehouse_id": "abc123costwh" },
     "snowflake": {
       "account": "myorg-sales-dev",
-      "domains": { "example_sales": { "role": "SALES_RW", "warehouse": "SALES_WH" } }
+      "domains": {
+        "example_sales": { "role": "SALES_RW", "warehouse": "SALES_WH" },
+        "mpo_ops": { "role": "MPO_MPO_OPS_DEV", "warehouse": "OPS_WH" }
+      },
+      "credit_price_usd": 4.0
     }
+  },
+  "insights": {
+    "ingestion_endpoint": "https://dcr-mpo-dev-a1b2.westeurope-1.ingest.monitor.azure.com",
+    "rule_id": "dcr-00000000000000000000000000000000"
   }
 }

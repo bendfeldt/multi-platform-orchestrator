@@ -207,6 +207,20 @@ wheels = [
 ]
 
 [[package]]
+name = "azure-monitor-ingestion"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "azure-core" },
+    { name = "isodate" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/71/a9/71d9da3ab13db73e3d4f344f9e4a06bc220d7fe7de8f96264d36ae2189d1/azure_monitor_ingestion-1.1.0.tar.gz", hash = "sha256:97afee780d9ae3069128cde77027d4cc62fa824fe64d5bac880ac4a64b0a0c4e", size = 61818, upload-time = "2025-07-18T23:26:50.966Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f7/9f/e9a55bbe647aceeaf78f1bf48e00699b8d5135dd6756af9f98dc7b4fa005/azure_monitor_ingestion-1.1.0-py3-none-any.whl", hash = "sha256:41765fb3df8e0933f1a7eaf1cb0a5f30acce856afa8831bfa4777ad26594f019", size = 57560, upload-time = "2025-07-18T23:26:51.948Z" },
+]
+
+[[package]]
 name = "azure-monitor-opentelemetry"
 version = "1.8.11"
 source = { registry = "https://pypi.org/simple" }
@@ -1680,6 +1694,7 @@ version = "0.1.0"
 source = { editable = "libs/orchestrator_core" }
 dependencies = [
     { name = "azure-identity" },
+    { name = "azure-monitor-ingestion" },
     { name = "dagster" },
     { name = "dagster-azure", extra = ["container-apps"] },
     { name = "dagster-postgres" },
@@ -1700,6 +1715,7 @@ webserver = [
 [package.metadata]
 requires-dist = [
     { name = "azure-identity", specifier = ">=1.26,<2" },
+    { name = "azure-monitor-ingestion", specifier = ">=1.1,<2" },
     { name = "dagster", specifier = "==1.13.26" },
     { name = "dagster-azure", extras = ["container-apps"], specifier = "==0.29.26" },
     { name = "dagster-dbt", marker = "extra == 'dbt'", specifier = "==0.29.26" },

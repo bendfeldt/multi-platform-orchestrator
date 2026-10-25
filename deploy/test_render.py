@@ -50,6 +50,24 @@ def test_runs_inherit_the_domain_identity_not_the_daemons():
         assert f"DAGSTER_PG_USER={domain.principal_name}" in context["env_vars"]
 
 
+def test_only_mpo_ops_gets_the_cost_and_insight_settings():
+    resources = render(CONTRACT, IMAGES)
+    ops = {"DATABRICKS_COST_WAREHOUSE_ID", "SNOWFLAKE_CREDIT_PRICE_USD", "MPO_INGESTION_ENDPOINT",
+           "MPO_INGESTION_RULE_ID"}  # fmt: skip
+    for location in CODE_LOCATIONS:
+        container = resources[f"app-{app_name(location)}.yaml"]["properties"]["template"][
+            "containers"
+        ][0]
+        names = {e["name"] for e in container["env"]}
+        command = container["command"]
+        run_env = json.loads(command[command.index("--container-context") + 1])["aca"]["env_vars"]
+        run_names = {item.split("=", 1)[0] for item in run_env}
+        if location == "mpo_ops":
+            assert ops <= names and ops <= run_names  # the jobs run as their own containers
+        else:
+            assert not ops & names and not ops & run_names, location
+
+
 def test_only_the_webserver_is_reachable_from_front_door():
     resources = render(CONTRACT, IMAGES)
     external = {

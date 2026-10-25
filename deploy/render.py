@@ -18,6 +18,7 @@ from orchestrator_core.contract import Contract, Identity, load_contract
 REPO = Path(__file__).resolve().parent.parent
 CODE_LOCATIONS = sorted(path.name for path in (REPO / "code_locations").iterdir() if path.is_dir())
 WORKSPACE = "/opt/dagster/workspace.yaml"
+OPS_LOCATION = "mpo_ops"
 
 
 def app_name(code_location: str) -> str:
@@ -55,6 +56,22 @@ def _platform_env(contract: Contract, domain: str) -> dict[str, str]:
             "SNOWFLAKE_ROLE": snowflake.role,
             "SNOWFLAKE_WAREHOUSE": snowflake.warehouse,
         }
+    return env
+
+
+def _ops_env(contract: Contract, location: str) -> dict[str, str]:
+    """mpo_ops alone reports cost and insights (orchestrator_core.cost / .insights)."""
+    if location != OPS_LOCATION:
+        return {}
+    env = {}
+    platforms = contract.platforms
+    if platforms.databricks and platforms.databricks.cost_warehouse_id:
+        env["DATABRICKS_COST_WAREHOUSE_ID"] = platforms.databricks.cost_warehouse_id
+    if platforms.snowflake and platforms.snowflake.credit_price_usd is not None:
+        env["SNOWFLAKE_CREDIT_PRICE_USD"] = str(platforms.snowflake.credit_price_usd)
+    if contract.insights:
+        env["MPO_INGESTION_ENDPOINT"] = contract.insights.ingestion_endpoint
+        env["MPO_INGESTION_RULE_ID"] = contract.insights.rule_id
     return env
 
 
@@ -221,6 +238,7 @@ def render(contract: Contract, images: dict[str, str]) -> dict[str, dict[str, An
             "DAGSTER_PG_USER": identity.principal_name,
             "AZURE_CLIENT_ID": identity.client_id,
             **_platform_env(contract, location),
+            **_ops_env(contract, location),
         }
         container_context = {
             "aca": {

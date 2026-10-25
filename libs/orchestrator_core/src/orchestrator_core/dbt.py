@@ -20,12 +20,16 @@ from orchestrator_core.asset_keys import (
     snowflake_key,
 )
 from orchestrator_core.auth import get_token
+from orchestrator_core.query_tag import ENV_VAR as QUERY_TAG_ENV
+from orchestrator_core.query_tag import query_tag_for
 from orchestrator_core.resources.databricks import DATABRICKS_SCOPE
 
 # The env var each dbt profile reads its Entra token from, e.g.
 # `token: "{{ env_var('DATABRICKS_TOKEN', 'unset') }}"`. The default keeps `dbt parse` working
 # at image build time, when no token exists. Snowflake profiles need no token: they use
-# `authenticator: workload_identity` like SnowflakeResource (Spike D confirms dbt-snowflake).
+# `authenticator: workload_identity` like SnowflakeResource (Spike D confirms dbt-snowflake),
+# and set `query_tag: "{{ env_var('MPO_QUERY_TAG', '') }}"` plus copy dbt_macros/ into the
+# project so Snowflake cost is attributed per model.
 TOKEN_SCOPES = {
     "databricks": ("DATABRICKS_TOKEN", DATABRICKS_SCOPE),
     "fabric": ("FABRIC_TOKEN", "https://database.windows.net/.default"),
@@ -51,18 +55,21 @@ def canonical_dbt_key(
 
 
 @contextmanager
-def _token_env(platform: str) -> Iterator[None]:
-    if platform not in TOKEN_SCOPES:
-        yield
-        return
-    name, scope = TOKEN_SCOPES[platform]
+def _run_env(platform: str, tag: str) -> Iterator[None]:
+    """Environment for one dbt invocation: an Entra token where the profile needs one, and the
+    Snowflake query tag (the profile's `query_tag`, plus the model via dbt_macros/)."""
     # dbt runs as a subprocess that inherits os.environ; each Dagster run is its own process.
-    # shortcut: one token per dbt invocation (~1 h lifetime); split very long builds.
-    os.environ[name] = get_token(scope)
+    env = {QUERY_TAG_ENV: tag} if platform == "snowflake" else {}
+    if platform in TOKEN_SCOPES:
+        name, scope = TOKEN_SCOPES[platform]
+        # shortcut: one token per dbt invocation (~1 h lifetime); split very long builds.
+        env[name] = get_token(scope)
+    os.environ.update(env)
     try:
         yield
     finally:
-        os.environ.pop(name, None)
+        for name in env:
+            os.environ.pop(name, None)
 
 
 @dataclass
@@ -82,5 +89,5 @@ class CanonicalDbtProject(DbtProjectComponent):
         )
 
     def execute(self, context: dg.AssetExecutionContext, dbt: DbtCliResource) -> Iterator:
-        with _token_env(self.platform):
+        with _run_env(self.platform, query_tag_for(context)):
             yield from super().execute(context, dbt)

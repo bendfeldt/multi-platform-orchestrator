@@ -9,6 +9,9 @@ from typing import Any, ClassVar
 import dagster as dg
 
 from orchestrator_core.asset_keys import key_from_string
+from orchestrator_core.query_tag import query_tag_for
+
+DATABRICKS_RUN_ID = "databricks_run_id"
 
 
 class _PlatformJob(dg.Component, dg.Model, dg.Resolvable):
@@ -20,7 +23,7 @@ class _PlatformJob(dg.Component, dg.Model, dg.Resolvable):
     kind: ClassVar[str]
     resource_key: ClassVar[str]
 
-    def run(self, resource: Any) -> dict[str, Any]:
+    def run(self, resource: Any, context: dg.AssetExecutionContext) -> dict[str, Any]:
         """Runs the job on the platform and returns metadata for the materializations."""
         raise NotImplementedError
 
@@ -38,7 +41,7 @@ class _PlatformJob(dg.Component, dg.Model, dg.Resolvable):
             name=self.name, specs=specs, required_resource_keys={self.resource_key}, pool=self.kind
         )
         def _job(context: dg.AssetExecutionContext):
-            metadata = self.run(getattr(context.resources, self.resource_key))
+            metadata = self.run(getattr(context.resources, self.resource_key), context)
             for spec in specs:
                 yield dg.MaterializeResult(asset_key=spec.key, metadata=metadata)
 
@@ -56,11 +59,15 @@ class FabricItemJob(_PlatformJob):
     job_type: str
     execution_data: dict[str, Any] | None = None
 
-    def run(self, resource: Any) -> dict[str, Any]:
+    def run(self, resource: Any, context: dg.AssetExecutionContext) -> dict[str, Any]:
         job = resource.run_item_job(
             self.workspace_id, self.item_id, self.job_type, self.execution_data
         )
-        return {"fabric_job_instance_id": job.get("id", "")}
+        return {
+            "fabric_job_instance_id": job.get("id", ""),
+            "fabric_workspace_id": self.workspace_id,
+            "fabric_item_id": self.item_id,
+        }
 
 
 class FabricSemanticModelRefresh(_PlatformJob):
@@ -71,9 +78,13 @@ class FabricSemanticModelRefresh(_PlatformJob):
     dataset_id: str
     objects: list[dict[str, str]] | None = None
 
-    def run(self, resource: Any) -> dict[str, Any]:
+    def run(self, resource: Any, context: dg.AssetExecutionContext) -> dict[str, Any]:
         refresh = resource.refresh_semantic_model(self.workspace_id, self.dataset_id, self.objects)
-        return {"refresh_request_id": refresh.get("requestId", "")}
+        return {
+            "refresh_request_id": refresh.get("requestId", ""),
+            "fabric_workspace_id": self.workspace_id,
+            "fabric_item_id": self.dataset_id,
+        }
 
 
 class DatabricksJob(_PlatformJob):
@@ -83,10 +94,11 @@ class DatabricksJob(_PlatformJob):
     job_id: int
     job_parameters: dict[str, str] | None = None
 
-    def run(self, resource: Any) -> dict[str, Any]:
+    def run(self, resource: Any, context: dg.AssetExecutionContext) -> dict[str, Any]:
         run = resource.run_job(self.job_id, self.job_parameters)
         return {
-            "run_id": run["run_id"],
+            # Billing (system.billing.usage.usage_metadata.job_run_id) joins on this.
+            DATABRICKS_RUN_ID: str(run["run_id"]),
             "run_page_url": dg.MetadataValue.url(run["run_page_url"] or ""),
         }
 
@@ -97,5 +109,5 @@ class SnowflakeSql(_PlatformJob):
 
     sql: str
 
-    def run(self, resource: Any) -> dict[str, Any]:
-        return {"query_ids": resource.execute(self.sql)}
+    def run(self, resource: Any, context: dg.AssetExecutionContext) -> dict[str, Any]:
+        return {"query_ids": resource.execute(self.sql, query_tag=query_tag_for(context))}

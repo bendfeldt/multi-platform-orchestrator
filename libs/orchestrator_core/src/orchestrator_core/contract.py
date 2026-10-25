@@ -44,6 +44,8 @@ class Ingress(BaseModel):
 
 class Databricks(BaseModel):
     host: str
+    # mpo_ops's SQL warehouse for the billing system tables (cost.py); None: no Databricks cost.
+    cost_warehouse_id: str | None = None
 
 
 class SnowflakeDomain(BaseModel):
@@ -54,6 +56,15 @@ class SnowflakeDomain(BaseModel):
 class Snowflake(BaseModel):
     account: str
     domains: dict[str, SnowflakeDomain]
+    # Your contract's price per credit; None: cost is reported in credits only.
+    credit_price_usd: float | None = None
+
+
+class Insights(BaseModel):
+    """The data collection rule mpo_ops sends cost and insight rows to (log_ingestion.py)."""
+
+    ingestion_endpoint: str
+    rule_id: str
 
 
 class Platforms(BaseModel):
@@ -76,6 +87,7 @@ class Contract(BaseModel):
     auth: Auth
     ingress: Ingress
     platforms: Platforms
+    insights: Insights | None = None
 
 
 def load_contract(path: str | Path) -> Contract:
