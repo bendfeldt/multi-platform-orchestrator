@@ -25,4 +25,5 @@ snowflake = {
   account      = "sales_dev"
   infra_user   = "MPO_INFRA_DEV"
   infra_role   = "MPO_INFRA_DEV"
+  # credit_price_usd = <your contract's USD price per credit>  # for cost in USD
 }

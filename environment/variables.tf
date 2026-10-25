@@ -105,8 +105,16 @@ variable "snowflake" {
     account      = string
     infra_user   = string
     infra_role   = string
+    # Your contract's price per credit, for cost in USD; without it cost is in credits.
+    credit_price_usd = optional(number)
   })
   default = null
+}
+
+variable "databricks_cost_warehouse_id" {
+  description = "Existing SQL warehouse for mpo_ops's billing query (its owner gives mpo_ops CAN_USE); null creates a small serverless one."
+  type        = string
+  default     = null
 }
 
 variable "alerts_file" {

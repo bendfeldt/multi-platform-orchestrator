@@ -146,6 +146,29 @@ run "empty_domain_gets_only_its_identity" {
   }
 }
 
+run "metadata_only_domain_gets_users_but_no_data_grants" {
+  command = plan
+
+  variables {
+    access = {
+      snowflake  = { warehouse = "OPS_WH", schemas = [] }
+      databricks = { schemas = [] }
+    }
+  }
+
+  assert {
+    condition = alltrue([
+      length(snowflake_service_user.this) == 1, length(databricks_service_principal.this) == 1,
+      snowflake_grant_privileges_to_account_role.warehouse[0].privileges == toset(["USAGE"]),
+      length(snowflake_grant_privileges_to_account_role.database) == 0,
+      length(snowflake_grant_privileges_to_account_role.schema) == 0,
+      length(snowflake_grant_privileges_to_account_role.tables) == 0,
+      length(databricks_grant.catalog) == 0, length(databricks_grant.schema) == 0,
+    ])
+    error_message = "mpo_ops: a Snowflake user with warehouse usage and a Databricks principal, no data access."
+  }
+}
+
 run "unknown_access_level_is_refused" {
   command = plan
 

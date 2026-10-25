@@ -33,11 +33,21 @@ locals {
       hostname = azurerm_cdn_frontdoor_endpoint.ui.host_name
     }
     platforms = {
-      databricks = var.databricks_host == null ? null : { host = var.databricks_host }
-      snowflake = var.snowflake == null ? null : {
-        account = "${var.snowflake.organization}-${var.snowflake.account}"
-        domains = { for name, domain in module.domain : name => domain.snowflake if domain.snowflake != null }
+      databricks = var.databricks_host == null ? null : {
+        host = var.databricks_host
+        cost_warehouse_id = !local.ops_databricks ? null : coalesce(
+          var.databricks_cost_warehouse_id, try(databricks_sql_endpoint.cost[0].id, null)
+        )
       }
+      snowflake = var.snowflake == null ? null : {
+        account          = "${var.snowflake.organization}-${var.snowflake.account}"
+        domains          = { for name, domain in module.domain : name => domain.snowflake if domain.snowflake != null }
+        credit_price_usd = var.snowflake.credit_price_usd
+      }
+    }
+    insights = !local.ops_domain ? null : {
+      ingestion_endpoint = azurerm_monitor_data_collection_rule.insights[0].logs_ingestion_endpoint
+      rule_id            = azurerm_monitor_data_collection_rule.insights[0].immutable_id
     }
   }
 }

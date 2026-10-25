@@ -1,0 +1,4 @@
+MpoCost_CL
+| where Scope == "asset"
+| summarize CostUsd = sum(CostUsd), SnowflakeCredits = sum(SnowflakeCredits), DatabricksDbus = sum(DatabricksDbus) by Asset
+| order by CostUsd desc

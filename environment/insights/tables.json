@@ -1,0 +1,34 @@
+{
+  "MpoCost_CL": {
+    "TimeGenerated": "datetime",
+    "Day": "datetime",
+    "Scope": "string",
+    "Location": "string",
+    "Job": "string",
+    "RunId": "string",
+    "Asset": "string",
+    "SnowflakeCredits": "real",
+    "DatabricksDbus": "real",
+    "DatabricksListCost": "real",
+    "CostUsd": "real",
+    "UnattributedSnowflakeCredits": "real"
+  },
+  "MpoInsights_CL": {
+    "TimeGenerated": "datetime",
+    "Day": "datetime",
+    "Scope": "string",
+    "Location": "string",
+    "Job": "string",
+    "Asset": "string",
+    "Runs": "int",
+    "Succeeded": "int",
+    "Failed": "int",
+    "Canceled": "int",
+    "DurationP50": "real",
+    "DurationP95": "real",
+    "Materializations": "int",
+    "ChecksPassed": "int",
+    "ChecksFailed": "int",
+    "FreshnessFailures": "int"
+  }
+}

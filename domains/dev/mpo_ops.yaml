@@ -1,4 +1,12 @@
-# Operations code location (alert sensors, later the cost jobs). It reads only Dagster's own
-# storage, so its identity gets no platform grants. Like any domain it has Launcher and Editor
-# roles; no group holds them until you list one here (launchers: / editors:).
-{}
+# Operations code location (alert sensors, cost and insight reports). It reads platform
+# metadata only, never business data:
+# - Snowflake: a service user and role with USAGE on this warehouse; ACCOUNTADMIN grants the
+#   role SNOWFLAKE.USAGE_VIEWER once (snowflake/cost_access.sql).
+# - Databricks: a service principal with CAN_USE on the cost warehouse (environment/insights.tf);
+#   a metastore admin grants it SELECT on system.billing once (README).
+# Like any domain it has Launcher and Editor roles; no group holds them until you list one.
+snowflake:
+  warehouse: MPO_OPS_WH_DEV  # an existing X-Small warehouse; example name
+  schemas: []
+databricks:
+  schemas: []

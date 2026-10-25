@@ -66,6 +66,10 @@ mock_provider "azurerm" {
     override_during = plan
     defaults        = { id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-mpo-dev/providers/Microsoft.Insights/actionGroups/ag-mock" }
   }
+  mock_resource "azurerm_monitor_data_collection_rule" {
+    override_during = plan
+    defaults        = { id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-mpo-dev/providers/Microsoft.Insights/dataCollectionRules/dcr-mpo-dev-insights", immutable_id = "dcr-00000000000000000000000000000000", logs_ingestion_endpoint = "https://dcr-mpo-dev-insights.westeurope-1.ingest.monitor.azure.com" }
+  }
   mock_data "azurerm_key_vault_secret" {
     defaults = { value = "https://example.invalid/hook?sig=from-key-vault" }
   }
@@ -74,7 +78,12 @@ mock_provider "azurerm" {
   }
 }
 mock_provider "azuread" {}
-mock_provider "databricks" {}
+mock_provider "databricks" {
+  mock_resource "databricks_sql_endpoint" {
+    override_during = plan
+    defaults        = { id = "costwh0000000001" }
+  }
+}
 mock_provider "snowflake" {}
 mock_provider "fabric" {}
 
@@ -201,7 +210,7 @@ run "contract_lists_every_domain" {
   command = plan
 
   assert {
-    condition     = toset(keys(local.contract.identities.domains)) == toset(["example_sales", "mpo_ops"]) && toset(keys(local.contract.platforms.snowflake.domains)) == toset(["example_sales"])
+    condition     = toset(keys(local.contract.identities.domains)) == toset(["example_sales", "mpo_ops"]) && toset(keys(local.contract.platforms.snowflake.domains)) == toset(["example_sales", "mpo_ops"])
     error_message = "Each domain file must appear in the contract."
   }
   assert {
@@ -210,12 +219,12 @@ run "contract_lists_every_domain" {
   }
 }
 
-run "ops_location_gets_an_identity_and_no_grants" {
+run "ops_location_gets_a_metadata_only_snowflake_role" {
   command = plan
 
   assert {
-    condition     = module.domain["mpo_ops"].snowflake == null
-    error_message = "mpo_ops reads only Dagster's storage: no Snowflake role (module tests cover the rest)."
+    condition     = module.domain["mpo_ops"].snowflake == { role = "MPO_MPO_OPS_DEV", warehouse = "MPO_OPS_WH_DEV" }
+    error_message = "mpo_ops gets a Snowflake role for its warehouse only (module tests: no data grants)."
   }
 }
 
@@ -311,4 +320,63 @@ run "unknown_kinds_and_odd_location_names_are_refused" {
   }
 
   expect_failures = [azurerm_monitor_scheduled_query_rules_alert_v2.route["0-error"], azurerm_monitor_scheduled_query_rules_alert_v2.route["0-warning"]]
+}
+
+run "ops_rows_go_through_one_rule_only_mpo_ops_may_use" {
+  command = plan
+
+  assert {
+    condition     = toset(keys(azurerm_log_analytics_workspace_table_custom_log.insights)) == toset(["MpoCost_CL", "MpoInsights_CL"])
+    error_message = "The two tables of the cost and insight reports."
+  }
+  assert {
+    condition     = azurerm_monitor_data_collection_rule.insights[0].kind == "Direct" && toset([for f in azurerm_monitor_data_collection_rule.insights[0].data_flow : f.output_stream]) == toset(["Custom-MpoCost_CL", "Custom-MpoInsights_CL"])
+    error_message = "A direct rule into exactly those tables."
+  }
+  assert {
+    condition = alltrue([
+      azurerm_role_assignment.ops_ingestion[0].role_definition_name == "Monitoring Metrics Publisher",
+      azurerm_role_assignment.ops_ingestion[0].scope == azurerm_monitor_data_collection_rule.insights[0].id,
+      azurerm_role_assignment.ops_ingestion[0].principal_id == module.domain["mpo_ops"].principal_id,
+    ])
+    error_message = "Only mpo_ops may send, and only through this rule."
+  }
+  assert {
+    condition     = local.contract.insights.rule_id == "dcr-00000000000000000000000000000000" && startswith(local.contract.insights.ingestion_endpoint, "https://")
+    error_message = "The contract must hand mpo_ops the rule's endpoint and immutable ID."
+  }
+  assert {
+    condition     = length(local.workbook_queries) == 4 && strcontains(azurerm_application_insights_workbook.insights[0].data_json, "MpoCost_CL")
+    error_message = "The workbook shows the report queries."
+  }
+}
+
+run "cost_warehouse_is_created_and_only_mpo_ops_may_use_it" {
+  command = plan
+
+  assert {
+    condition     = databricks_sql_endpoint.cost[0].enable_serverless_compute && databricks_sql_endpoint.cost[0].cluster_size == "2X-Small" && databricks_sql_endpoint.cost[0].auto_stop_mins == 10
+    error_message = "A small serverless warehouse that stops soon after the daily query."
+  }
+  assert {
+    condition     = [for a in databricks_permissions.cost_warehouse[0].access_control : a.permission_level] == ["CAN_USE"]
+    error_message = "mpo_ops may only use the warehouse."
+  }
+  assert {
+    condition     = local.contract.platforms.databricks.cost_warehouse_id == "costwh0000000001"
+    error_message = "The contract names the cost warehouse."
+  }
+}
+
+run "an_existing_cost_warehouse_is_used_as_given" {
+  command = plan
+
+  variables {
+    databricks_cost_warehouse_id = "existing123"
+  }
+
+  assert {
+    condition     = length(databricks_sql_endpoint.cost) == 0 && length(databricks_permissions.cost_warehouse) == 0 && local.contract.platforms.databricks.cost_warehouse_id == "existing123"
+    error_message = "With a given warehouse Terraform creates none and changes no permissions."
+  }
 }

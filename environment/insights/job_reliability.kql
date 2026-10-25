@@ -1,0 +1,5 @@
+MpoInsights_CL
+| where Scope == "job"
+| summarize Runs = sum(Runs), Failed = sum(Failed), DurationP95 = max(DurationP95) by Location, Job
+| extend FailureRate = round(100.0 * Failed / Runs, 1)
+| order by FailureRate desc

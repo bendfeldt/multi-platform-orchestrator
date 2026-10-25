@@ -17,6 +17,7 @@ credential or a managed identity.
 | `domains/<env>/<name>.yaml` | What each domain may read and write. File name = the code location's name | People, by pull request |
 | `alerts/<env>.yaml` | Who is notified about which Dagster alerts, and how | People, by pull request |
 | `snowflake/bootstrap.sql` | The infra pipeline's Snowflake login (workload identity) | A Snowflake admin, once per account |
+| `snowflake/cost_access.sql` | Lets mpo_ops read Snowflake's cost attribution | A Snowflake admin, once per environment |
 | `scripts/` | `ci.sh`, `apply.sh`, `install-tools.sh`, called by both CI systems; `check-kql.sh` parses the alert queries | |
 
 ## Set up (once)
@@ -40,6 +41,17 @@ credential or a managed identity.
      `databricks_permissions` would replace each job's whole permission list).
    - Fabric: allow service principals to use Fabric APIs for a security group containing the
      deployers and domain identities; make the infra deployer Admin of the domains' workspaces.
+   - Cost report (`mpo_ops`), after the first apply: a Snowflake ACCOUNTADMIN runs
+     `snowflake/cost_access.sql`; a Databricks metastore admin runs, with mpo_ops's client ID
+     (contract `identities.domains.mpo_ops.client_id`):
+     ```sql
+     GRANT USE CATALOG ON CATALOG system TO `<client-id>`;
+     GRANT USE SCHEMA, SELECT ON SCHEMA system.billing TO `<client-id>`;
+     ```
+     Both read cost metadata only. Set `snowflake.credit_price_usd` in `envs/<env>.tfvars` for
+     cost in USD. `databricks_cost_warehouse_id` reuses an existing SQL warehouse (its owner
+     gives mpo_ops `CAN_USE`); otherwise Terraform creates a 2X-Small serverless one that stops
+     10 minutes after the daily query.
 3. **Environment values**: copy the bootstrap outputs into `environment/envs/<env>.tfvars`
    (and the dev file's `acr_pull_principal_ids` with the test and prod app deployers).
 4. **CI**: environments `dev`, `test`, `prod` (GitHub) or `mpo-infra-<env>` (ADO) with approvals
@@ -52,8 +64,8 @@ credential or a managed identity.
 ## Day to day
 
 - Pull requests run `scripts/ci.sh`: format, validate, `terraform test` (mocked providers,
-  including the grant tests in `modules/domain_access/tests`), the alert queries through
-  Microsoft's Kusto parser, and a Trivy scan. No cloud login.
+  including the grant tests in `modules/domain_access/tests`), the alert and workbook
+  queries through Microsoft's Kusto parser, and a Trivy scan. No cloud login.
 - Merging to `main` applies dev, then test and prod after approval.
 - **Add a domain**: add `domains/<env>/<name>.yaml` for each environment. Terraform creates
   its identity and exactly the listed grants, adds it to the contract, and creates the
@@ -70,6 +82,10 @@ credential or a managed identity.
   minutes. The URL of a webhook, Logic App, Function or runbook receiver holds a key, so the file
   only names a Key Vault secret; its owner stores the URL there and gives the infra deployer
   `Key Vault Secrets User` on it. Prefer `secure_webhook` (Entra) where the target supports it.
+- **Cost and insights**: `mpo_ops` sends daily rows to `MpoCost_CL` and `MpoInsights_CL`
+  (columns in `environment/insights/tables.json`) through a data collection rule it alone may
+  use; the workbook "Dagster cost and reliability" shows them (queries in
+  `environment/insights/*.kql`).
 
 ## Not yet verified against Azure (Phase 0 spikes)
 
@@ -80,3 +96,6 @@ credential or a managed identity.
 - Whether an Event Hub receiver needs a role on the hub (Microsoft documents only the preview
   managed-identity variant, which the azurerm provider does not expose yet).
 - The alert lines arriving unchanged in `Log_s` (the KQL is parsed, not run, in CI).
+- Whether the infra role's `MANAGE GRANTS` may grant `SNOWFLAKE.USAGE_VIEWER` (then
+  `cost_access.sql` moves into Terraform).
+- The workbook JSON rendering as intended (only its queries are checked in CI).
