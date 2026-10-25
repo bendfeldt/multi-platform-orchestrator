@@ -11,7 +11,7 @@ to Azure Container Apps with Entra ID everywhere and least-privilege identities.
 | Path | What |
 |---|---|
 | `libs/orchestrator_core` | Shared library: Entra credentials, canonical asset keys, environment contract |
-| `code_locations/<domain>` | One Dagster code location per domain (own image and identity in Azure) |
+| `code_locations/<domain>` | One Dagster code location per domain (own image and identity in Azure); `mpo_ops` holds the operations sensors |
 | `containers/Containerfile` | One Containerfile for all images; `SYNC_ARGS` picks the package |
 | `deploy/` | Dagster instance/workspace config and the scripts CI calls |
 | `local/compose.yaml` | Local stack: Postgres, webserver, daemon, code locations |
@@ -53,6 +53,11 @@ In Azure the UI runs `orchestrator_core.webserver`: Dagster's webserver with Ent
 per code location (`Dagster.Viewer`, `Dagster.Launcher.<domain>`, `Dagster.Editor.<domain>`,
 `Dagster.Admin`) and an audit log of every UI action. Runs launched from the UI carry the
 user in the `mpo/launched_by` tag. Each table has exactly one writing domain.
+
+Alerts: the `mpo_ops` code location's sensors (failed runs, failed checks, freshness) and the
+5-minute `dagster-health` job (daemons, failed ticks, broken code locations) print one JSON
+line per alert. Azure Monitor rules from the infra repo's `alerts/<env>.yaml` deliver them;
+see [docs/PRO_FEATURES_PLAN.md](docs/PRO_FEATURES_PLAN.md) §4.
 
 ## Add a domain
 
