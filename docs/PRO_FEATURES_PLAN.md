@@ -1,6 +1,6 @@
 # Dagster+ Pro Features on Open-Source Dagster — Plan
 
-Status: **Phases A (role-based access, audit) and B (alerts) implemented and tested; phases C–H planned.**
+Status: **Phases A (role-based access, audit), B (alerts) and C (cost and insights) implemented and tested; phases D–H planned.**
 Builds on [PLAN.md](PLAN.md). Decisions in §11.
 
 How every statement here was checked:
@@ -169,8 +169,8 @@ materializations, check pass rate, freshness misses.
 
 | Platform | Source | Join key | Verified |
 |---|---|---|---|
-| Snowflake | `SNOWFLAKE.ACCOUNT_USAGE.QUERY_ATTRIBUTION_HISTORY.CREDITS_ATTRIBUTED_COMPUTE` | `QUERY_TAG` = Dagster run ID + asset key, set by `SnowflakeResource` (session parameter) and by dbt (`+query_tag` from an env var) | [D]: readable with database role `USAGE_VIEWER`; up to 8 h latency; queries ≤ ~100 ms and idle time not attributed |
-| Databricks | `system.billing.usage` ⋈ `system.billing.list_prices` | `usage_metadata.job_run_id` — already stored by `DatabricksResource` as `run_id` | [D]: only job and serverless compute; list prices; for classic compute the Azure VM cost is separate |
+| Snowflake | `SNOWFLAKE.ACCOUNT_USAGE.QUERY_ATTRIBUTION_HISTORY.CREDITS_ATTRIBUTED_COMPUTE` (+ query acceleration credits) | `QUERY_TAG` = `{"mpo_run","mpo_step"}`, set by `SnowflakeResource` (session parameter) and by dbt (profile `query_tag` from `MPO_QUERY_TAG`); a shipped dbt macro adds `mpo_dbt_node` per model | [D]: readable with database role `USAGE_VIEWER`; up to 8 h latency; queries ≤ ~100 ms and idle time not attributed |
+| Databricks | `system.billing.usage` ⋈ `system.billing.list_prices` (`pricing.effective_list.default`, the price Databricks documents for cost) | `usage_metadata.job_run_id` — stored on materializations as `databricks_run_id` | [D]: only job and serverless compute; list prices; for classic compute the Azure VM cost is separate |
 | Fabric | Capacity operation events (`Microsoft.Fabric.CapacityOperationEvents.Operation`) via Real-Time hub → Eventstream → Eventhouse | `itemId` + run time window; `operationId` if it equals the job instance ID | [D] fields `workspaceId`, `itemId`, `operationId`, `capacityUnitMs`; [?] whether `operationId` matches our job instance ID |
 
 ### 5.3 Where it shows
@@ -187,8 +187,8 @@ materializations, check pass rate, freshness misses.
 ### 5.4 Access for `mpo_ops`
 
 Read-only, platform-metadata only, no business data:
-- Snowflake: database role `SNOWFLAKE.USAGE_VIEWER` [D]
-- Databricks: `SELECT` on `system.billing` and `system.lakeflow` (granted by a metastore admin)
+- Snowflake: database role `SNOWFLAKE.USAGE_VIEWER` [D] (one-time `snowflake/cost_access.sql`), and `USAGE` on one warehouse
+- Databricks: `USE CATALOG system`, `USE SCHEMA`/`SELECT` on `system.billing` (one-time, by a metastore admin), `CAN_USE` on the cost warehouse
 - Fabric: Viewer on the monitoring Eventhouse
 - Azure: *Monitoring Metrics Publisher* on the data collection rule
 - Postgres: `dagster_rw` like every Dagster process (reads run history)
@@ -276,6 +276,8 @@ No external party guarantees this; it is your SLA to run.
 | S5 | Workspace file from a secret volume, reloaded without image rebuild | Preview location appears in the UI |
 | S6 | Purview custom lineage with column mappings renders | Column edges visible (only if Purview is chosen) |
 | S7 | Event Hub receiver without a managed identity: does the hub need a role? | Alert arrives on the hub; note any role needed |
+| S8 | May the infra role (`MANAGE GRANTS`) grant `SNOWFLAKE.USAGE_VIEWER`? | Grant succeeds from Terraform; then `cost_access.sql` moves into Terraform |
+| S9 | The dbt query-tag macro on dbt-snowflake | Model queries show `mpo_dbt_node` in `QUERY_HISTORY` |
 
 ## 11. Delivery
 
@@ -328,6 +330,31 @@ redundancy only if chosen.
 - Infra: `alerts/<env>.yaml`, `environment/alerts.tf`, identity `mpo_ops` without platform
   grants; 11 environment and 6 module plan tests, including every receiver type, refused
   mistakes, and a removed-check mutation that a test catches.
+
+**Phase C, as built:**
+- `orchestrator_core.query_tag`, the Snowflake session tag in `SnowflakeResource` and
+  `SnowflakeSql`, `MPO_QUERY_TAG` for dbt and `dbt_macros/mpo_query_tag.sql` (overrides
+  dbt-snowflake's dispatched `snowflake__set_query_tag`/`unset_query_tag`; read from its
+  source).
+- `orchestrator_core.cost` (`mpo_cost`, daily, for the day before yesterday because Snowflake
+  attribution lags up to 8 h): finished runs → materializations → cost. A dbt node tag goes to
+  its model; a step tag is split over that step's assets; cost no asset can carry (failed
+  steps) is kept per run as unattributed. Observations carry `cost_usd`, `snowflake_credits`,
+  `databricks_dbus`, ...; `cost_usd` only when every part can be priced in USD.
+- `orchestrator_core.insights` (`mpo_insights`, nightly): per job runs, outcomes, p50/p95
+  duration; per asset materializations, check results, freshness failures.
+- `orchestrator_core.log_ingestion`: Logs Ingestion API with the managed identity; nothing is
+  sent without the contract's `insights` settings.
+- Infra: tables from one `tables.json`, a `Direct` data collection rule (own ingestion
+  endpoint, no DCE [D]), *Monitoring Metrics Publisher* for mpo_ops on that rule only, the
+  workbook, the cost warehouse. Row timestamps are the upload time and the reported day is a
+  column, so no ingestion-age limit applies.
+- Found while testing: `platform_resources()` cannot be used outside Dagster's resource
+  initialisation (its `EnvVar` fields would be the variable names), so the cost job builds its
+  clients from the values.
+- 16 new tests (attribution rules, the real example components' tags end to end, Databricks
+  paging and failure, schedules, insights), a mutation check, and the workbook queries parsed
+  against the table definitions.
 
 ## 12. Sources
 

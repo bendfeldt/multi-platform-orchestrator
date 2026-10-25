@@ -59,6 +59,12 @@ Alerts: the `mpo_ops` code location's sensors (failed runs, failed checks, fresh
 line per alert. Azure Monitor rules from the infra repo's `alerts/<env>.yaml` deliver them;
 see [docs/PRO_FEATURES_PLAN.md](docs/PRO_FEATURES_PLAN.md) §4.
 
+Cost and insights: `mpo_ops` also runs `mpo_cost` (platform cost per asset, charted on each
+asset page under Plots) and `mpo_insights` (runs, failures, durations, checks) daily, and sends
+both to Log Analytics for the workbook. dbt projects on Snowflake set
+`query_tag: "{{ env_var('MPO_QUERY_TAG', '') }}"` in their profile and copy
+`libs/orchestrator_core/dbt_macros/mpo_query_tag.sql` into `macros/` for cost per model.
+
 ## Add a domain
 
 1. Copy `code_locations/example_sales` to `code_locations/<domain>` and rename the package.
