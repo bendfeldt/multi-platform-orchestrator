@@ -129,6 +129,23 @@ run "unused_platforms_get_nothing" {
   }
 }
 
+run "empty_domain_gets_only_its_identity" {
+  command = plan
+
+  variables {
+    access = {}
+  }
+
+  assert {
+    condition = alltrue([
+      length(databricks_service_principal.this) == 0, length(databricks_grant.catalog) == 0,
+      length(databricks_grant.schema) == 0, length(fabric_workspace_role_assignment.this) == 0,
+      length(snowflake_account_role.this) == 0, length(snowflake_service_user.this) == 0,
+    ])
+    error_message = "A domain file without platforms (mpo_ops) must get no platform access."
+  }
+}
+
 run "unknown_access_level_is_refused" {
   command = plan
 

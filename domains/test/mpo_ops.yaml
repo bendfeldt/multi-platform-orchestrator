@@ -1,0 +1,4 @@
+# Operations code location (alert sensors, later the cost jobs). It reads only Dagster's own
+# storage, so its identity gets no platform grants. Like any domain it has Launcher and Editor
+# roles; no group holds them until you list one here (launchers: / editors:).
+{}

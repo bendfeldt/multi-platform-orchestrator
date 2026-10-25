@@ -1,0 +1,20 @@
+# Who hears about what in test (environment/alerts.tf). Example values: replace them.
+#
+# action_groups: who gets notified and how. Every receiver type Azure Monitor offers:
+#   email, sms, voice, push (Azure mobile app), arm_role (members of an Azure role),
+#   secure_webhook (Entra-protected API), event_hub, itsm, and the four whose URL holds a key
+#   (webhook, logic_app, function, runbook): that URL stays out of git. Its owner keeps it as a
+#   Key Vault secret and grants the infra deployer "Key Vault Secrets User" on it.
+# routes: which alerts go to which groups, filtered by code location, kind and severity
+#   (an empty or missing list means all). Kinds: run_failure, check_failed, freshness,
+#   tick_failure, code_location_error, daemon_unhealthy.
+# health_action_groups: told when the 5-minute health check has not reported for 15 minutes.
+action_groups:
+  platform:
+    short_name: mpo-test  # at most 12 characters; shown in SMS and email
+    email:
+      - name: platform-team
+        address: dataplatform@contoso.com
+routes:
+  - action_groups: [platform]
+health_action_groups: [platform]

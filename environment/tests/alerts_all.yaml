@@ -1,0 +1,66 @@
+# Every receiver type and route option (environment.tftest.hcl).
+action_groups:
+  platform:
+    short_name: mpo-plat
+    email:
+      - name: team
+        address: team@contoso.com
+    sms:
+      - name: on-call-sms
+        country_code: "45"
+        phone_number: "12345678"
+    voice:
+      - name: on-call-voice
+        country_code: "45"
+        phone_number: "12345678"
+    push:
+      - name: lead
+        email_address: lead@contoso.com
+    arm_role:
+      - name: owners
+        role_id: 8e3af657-a8ff-443c-a75c-2fe8c4bcb635
+    secure_webhook:
+      - name: incident-api
+        service_uri: https://incidents.contoso.com/api/alerts
+        object_id: 00000000-0000-0000-0000-0000000000e1
+        identifier_uri: api://incidents
+    event_hub:
+      - name: siem
+        namespace: evhns-siem
+        event_hub: alerts
+    itsm:
+      - name: servicenow
+        workspace_id: 00000000-0000-0000-0000-000000000001|00000000-0000-0000-0000-0000000000e2
+        connection_id: 00000000-0000-0000-0000-0000000000e3
+        ticket_configuration: '{"PayloadRevision":0,"WorkItemType":"Incident"}'
+        region: westeurope
+    webhook:
+      - name: pager
+        secret: { key_vault_id: /subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-ops/providers/Microsoft.KeyVault/vaults/kv-ops, name: pager-url }
+    logic_app:
+      - name: teams
+        resource_id: /subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-ops/providers/Microsoft.Logic/workflows/la-teams
+        secret: { key_vault_id: /subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-ops/providers/Microsoft.KeyVault/vaults/kv-ops, name: teams-callback }
+    function:
+      - name: enrich
+        function_app_resource_id: /subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-ops/providers/Microsoft.Web/sites/func-ops
+        function_name: enrich
+        secret: { key_vault_id: /subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-ops/providers/Microsoft.KeyVault/vaults/kv-ops, name: enrich-url }
+    runbook:
+      - name: restart
+        automation_account_id: /subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-ops/providers/Microsoft.Automation/automationAccounts/aa-ops
+        runbook_name: restart-dagster
+        webhook_resource_id: /subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-ops/providers/Microsoft.Automation/automationAccounts/aa-ops/webhooks/restart
+        secret: { key_vault_id: /subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-ops/providers/Microsoft.KeyVault/vaults/kv-ops, name: restart-url }
+  sales:
+    short_name: sales
+    email:
+      - name: sales
+        address: sales@contoso.com
+routes:
+  - action_groups: [platform]
+    severities: [error]
+  - action_groups: [sales]
+    locations: [example_sales]
+    kinds: [run_failure, check_failed]
+health_action_groups: [platform]

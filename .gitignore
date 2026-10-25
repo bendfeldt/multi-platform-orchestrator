@@ -4,3 +4,6 @@
 tfplan
 *.tfvars.json
 crash.log
+scripts/kql/node_modules/
+scripts/kql/queries.json
+scripts/kql/package-lock.json

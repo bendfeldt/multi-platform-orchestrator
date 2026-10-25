@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "Checks the KQL of the alert rules (scripts/check-kql.sh).",
+  "dependencies": {
+    "@kusto/language-service-next": "12.4.1"
+  }
+}

@@ -1,0 +1,23 @@
+# Who hears about what in prod (environment/alerts.tf). See dev.yaml for every option.
+# Example values: replace them.
+action_groups:
+  platform:
+    short_name: mpo-prod
+    email:
+      - name: platform-team
+        address: dataplatform@contoso.com
+    sms:
+      - name: on-call
+        country_code: "45"
+        phone_number: "12345678"
+  sales:
+    short_name: sales-prod
+    email:
+      - name: sales-data
+        address: sales-data@contoso.com
+routes:
+  - action_groups: [platform]
+    severities: [error]
+  - action_groups: [sales]
+    locations: [example_sales]
+health_action_groups: [platform]

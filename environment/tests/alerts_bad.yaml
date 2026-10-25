@@ -1,0 +1,6 @@
+# An action group the plan must refuse (environment.tftest.hcl).
+action_groups:
+  bad:
+    short_name: bad
+    pigeon:
+      - name: coo

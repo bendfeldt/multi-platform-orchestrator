@@ -15,8 +15,9 @@ credential or a managed identity.
 | `environment/` | One environment (dev, test or prod): network, Container Apps environment, Postgres, ACR, logs, identities, sign-in apps, Front Door endpoints and WAF, image policy, domains, contract | The pipelines |
 | `modules/domain_access/` | One domain: its managed identity and its grants on Databricks, Fabric and Snowflake | via `environment/` |
 | `domains/<env>/<name>.yaml` | What each domain may read and write. File name = the code location's name | People, by pull request |
+| `alerts/<env>.yaml` | Who is notified about which Dagster alerts, and how | People, by pull request |
 | `snowflake/bootstrap.sql` | The infra pipeline's Snowflake login (workload identity) | A Snowflake admin, once per account |
-| `scripts/` | `ci.sh`, `apply.sh`, `install-tools.sh`, called by both CI systems | |
+| `scripts/` | `ci.sh`, `apply.sh`, `install-tools.sh`, called by both CI systems; `check-kql.sh` parses the alert queries | |
 
 ## Set up (once)
 
@@ -51,7 +52,8 @@ credential or a managed identity.
 ## Day to day
 
 - Pull requests run `scripts/ci.sh`: format, validate, `terraform test` (mocked providers,
-  including the grant tests in `modules/domain_access/tests`) and a Trivy scan. No cloud login.
+  including the grant tests in `modules/domain_access/tests`), the alert queries through
+  Microsoft's Kusto parser, and a Trivy scan. No cloud login.
 - Merging to `main` applies dev, then test and prod after approval.
 - **Add a domain**: add `domains/<env>/<name>.yaml` for each environment. Terraform creates
   its identity and exactly the listed grants, adds it to the contract, and creates the
@@ -60,6 +62,14 @@ credential or a managed identity.
 - **Who may do what in Dagster**: groups in `viewer_group_ids` / `admin_group_ids`
   (`envs/<env>.tfvars`) and the domain files. Group-to-role assignment needs Entra ID P1 or
   P2.
+- **Alerts**: `alerts/<env>.yaml` names action groups (email, SMS, voice, Azure app push, Azure
+  role, Entra-secured webhook, Event Hub, ITSM, and webhook, Logic App, Function and runbook)
+  and routes alerts to them by code location, kind and severity. One log alert rule per route
+  and severity reads the solution's alert lines from Log Analytics as a dedicated identity with
+  Log Analytics Reader; another fires when the 5-minute health check has not reported for 15
+  minutes. The URL of a webhook, Logic App, Function or runbook receiver holds a key, so the file
+  only names a Key Vault secret; its owner stores the URL there and gives the infra deployer
+  `Key Vault Secrets User` on it. Prefer `secure_webhook` (Entra) where the target supports it.
 
 ## Not yet verified against Azure (Phase 0 spikes)
 
@@ -67,3 +77,6 @@ credential or a managed identity.
 - The Azure Policy aliases for Container Apps images (`bootstrap/environment/main.tf`).
 - The Snowflake provider's workload identity login from a CI runner.
 - Container Apps sign-in without a client secret (implicit ID tokens in `entra.tf`).
+- Whether an Event Hub receiver needs a role on the hub (Microsoft documents only the preview
+  managed-identity variant, which the azurerm provider does not expose yet).
+- The alert lines arriving unchanged in `Log_s` (the KQL is parsed, not run, in CI).

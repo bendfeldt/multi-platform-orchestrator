@@ -108,3 +108,9 @@ variable "snowflake" {
   })
   default = null
 }
+
+variable "alerts_file" {
+  description = "Alert routing file; default alerts/<environment>.yaml at the repository root."
+  type        = string
+  default     = null
+}

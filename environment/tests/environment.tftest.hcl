@@ -62,6 +62,13 @@ mock_provider "azurerm" {
     override_during = plan
     defaults        = { role_definition_resource_id = "/subscriptions/00000000-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-0000000000aa" }
   }
+  mock_resource "azurerm_monitor_action_group" {
+    override_during = plan
+    defaults        = { id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-mpo-dev/providers/Microsoft.Insights/actionGroups/ag-mock" }
+  }
+  mock_data "azurerm_key_vault_secret" {
+    defaults = { value = "https://example.invalid/hook?sig=from-key-vault" }
+  }
   mock_data "azurerm_resource_group" {
     defaults = { id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-mpo-dev" }
   }
@@ -172,7 +179,7 @@ run "roles_go_only_to_the_groups_named_for_them" {
     error_message = "Each group gets exactly the roles its variable or domain file names."
   }
   assert {
-    condition     = toset([for r in azuread_application.ui.app_role : r.value]) == toset(["Dagster.Viewer", "Dagster.Admin", "Dagster.Launcher.example_sales", "Dagster.Editor.example_sales"])
+    condition     = toset([for r in azuread_application.ui.app_role : r.value]) == toset(["Dagster.Viewer", "Dagster.Admin", "Dagster.Launcher.example_sales", "Dagster.Editor.example_sales", "Dagster.Launcher.mpo_ops", "Dagster.Editor.mpo_ops"])
     error_message = "The sign-in app defines the four kinds of roles, per domain where scoped."
   }
   assert {
@@ -194,11 +201,114 @@ run "contract_lists_every_domain" {
   command = plan
 
   assert {
-    condition     = toset(keys(local.contract.identities.domains)) == toset(["example_sales"]) && toset(keys(local.contract.platforms.snowflake.domains)) == toset(["example_sales"])
+    condition     = toset(keys(local.contract.identities.domains)) == toset(["example_sales", "mpo_ops"]) && toset(keys(local.contract.platforms.snowflake.domains)) == toset(["example_sales"])
     error_message = "Each domain file must appear in the contract."
   }
   assert {
     condition     = local.contract.schema_version == 2 && local.contract.platforms.snowflake.account == "myorg-sales_dev"
     error_message = "Contract shape changed; bump schema_version in both repos."
   }
+}
+
+run "ops_location_gets_an_identity_and_no_grants" {
+  command = plan
+
+  assert {
+    condition     = module.domain["mpo_ops"].snowflake == null
+    error_message = "mpo_ops reads only Dagster's storage: no Snowflake role (module tests cover the rest)."
+  }
+}
+
+run "every_receiver_type_and_route" {
+  command = plan
+
+  variables {
+    alerts_file = "tests/alerts_all.yaml"
+  }
+
+  assert {
+    condition = alltrue([
+      length(azurerm_monitor_action_group.this["platform"].email_receiver) == 1,
+      length(azurerm_monitor_action_group.this["platform"].sms_receiver) == 1,
+      length(azurerm_monitor_action_group.this["platform"].voice_receiver) == 1,
+      length(azurerm_monitor_action_group.this["platform"].azure_app_push_receiver) == 1,
+      length(azurerm_monitor_action_group.this["platform"].arm_role_receiver) == 1,
+      length(azurerm_monitor_action_group.this["platform"].event_hub_receiver) == 1,
+      length(azurerm_monitor_action_group.this["platform"].itsm_receiver) == 1,
+      length(azurerm_monitor_action_group.this["platform"].webhook_receiver) == 2,
+      length(azurerm_monitor_action_group.this["platform"].logic_app_receiver) == 1,
+      length(azurerm_monitor_action_group.this["platform"].azure_function_receiver) == 1,
+      length(azurerm_monitor_action_group.this["platform"].automation_runbook_receiver) == 1,
+    ])
+    error_message = "Every receiver type in the file must reach the action group."
+  }
+  assert {
+    condition     = toset([for w in azurerm_monitor_action_group.this["platform"].webhook_receiver : length(w.aad_auth)]) == toset([0, 1])
+    error_message = "Only the secure webhook uses Entra auth."
+  }
+  assert {
+    condition     = azurerm_monitor_action_group.this["platform"].logic_app_receiver[0].callback_url == "https://example.invalid/hook?sig=from-key-vault"
+    error_message = "Keyed URLs must come from Key Vault."
+  }
+  assert {
+    condition     = toset(keys(data.azurerm_key_vault_secret.receiver)) == toset(["platform/webhook/pager", "platform/logic_app/teams", "platform/function/enrich", "platform/runbook/restart"])
+    error_message = "Exactly the four keyed receivers read Key Vault."
+  }
+  assert {
+    condition     = toset(keys(azurerm_monitor_scheduled_query_rules_alert_v2.route)) == toset(["0-error", "1-error", "1-warning"])
+    error_message = "One rule per route and severity."
+  }
+  assert {
+    condition     = azurerm_monitor_scheduled_query_rules_alert_v2.route["0-error"].severity == 1 && azurerm_monitor_scheduled_query_rules_alert_v2.route["1-warning"].severity == 2
+    error_message = "error is Sev1, warning Sev2."
+  }
+  assert {
+    condition = alltrue([
+      strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.route["1-error"].criteria[0].query, "| where alert_location in (\"example_sales\")"),
+      strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.route["1-error"].criteria[0].query, "| where alert_kind in (\"run_failure\", \"check_failed\")"),
+      !strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.route["0-error"].criteria[0].query, "alert_location in"),
+    ])
+    error_message = "Routes filter by their locations and kinds, and only when given."
+  }
+  assert {
+    condition     = toset(azurerm_monitor_scheduled_query_rules_alert_v2.route["1-error"].action[0].action_groups) == toset([azurerm_monitor_action_group.this["sales"].id])
+    error_message = "A route notifies only its own groups."
+  }
+}
+
+run "alert_rules_read_only_logs_and_cannot_be_faked" {
+  command = plan
+
+  assert {
+    condition     = azurerm_role_assignment.alerts_logs.role_definition_name == "Log Analytics Reader" && azurerm_role_assignment.alerts_logs.scope == azurerm_log_analytics_workspace.this.id
+    error_message = "The alert identity may only read this environment's logs."
+  }
+  assert {
+    condition     = alltrue([for r in azurerm_monitor_scheduled_query_rules_alert_v2.route : r.identity[0].type == "UserAssigned"]) && azurerm_monitor_scheduled_query_rules_alert_v2.health_missing[0].identity[0].type == "UserAssigned"
+    error_message = "Rules must query as the alert identity, not as their last editor."
+  }
+  assert {
+    condition     = strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.health_missing[0].criteria[0].query, "ContainerJobName_s == \"dagster-health\"") && azurerm_monitor_scheduled_query_rules_alert_v2.health_missing[0].criteria[0].operator == "LessThan"
+    error_message = "Only the health job's own lines may keep the absence alert quiet."
+  }
+}
+
+run "unknown_receiver_types_are_refused" {
+  command = plan
+
+  variables {
+    alerts_file = "tests/alerts_bad.yaml"
+  }
+
+  expect_failures = [azurerm_monitor_action_group.this["bad"]]
+}
+
+run "unknown_kinds_and_odd_location_names_are_refused" {
+  command = plan
+
+  variables {
+    alerts_file = "tests/alerts_bad_route.yaml"
+  }
+
+  expect_failures = [azurerm_monitor_scheduled_query_rules_alert_v2.route["0-error"], azurerm_monitor_scheduled_query_rules_alert_v2.route["0-warning"]]
 }

@@ -9,6 +9,10 @@ for root in modules/domain_access environment bootstrap; do
   echo "== $root"
   (cd "$root" && terraform init -input=false -backend=false >/dev/null && terraform validate && terraform test)
 done
+if command -v node >/dev/null; then
+  echo "== alert queries"
+  scripts/check-kql.sh
+fi
 if command -v trivy >/dev/null; then
   trivy config --exit-code 1 --severity HIGH,CRITICAL --skip-dirs .terraform .
 fi

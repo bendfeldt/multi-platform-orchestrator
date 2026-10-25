@@ -1,0 +1,11 @@
+# A route the plan must refuse (environment.tftest.hcl).
+action_groups:
+  ok:
+    short_name: ok
+    email:
+      - name: team
+        address: team@contoso.com
+routes:
+  - action_groups: [ok]
+    kinds: [no_such_kind]
+    locations: ["x) or true //"]
