@@ -13,7 +13,8 @@
     "webserver": { "resource_id": "/subscriptions/0/resourceGroups/rg-mpo-dev/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-dagster-web-dev", "client_id": "22222222-2222-2222-2222-222222222222", "principal_name": "id-dagster-web-dev" },
     "admin": { "resource_id": "/subscriptions/0/resourceGroups/rg-mpo-dev/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-dagster-admin-dev", "client_id": "33333333-3333-3333-3333-333333333333", "principal_name": "id-dagster-admin-dev" },
     "domains": {
-      "example_sales": { "resource_id": "/subscriptions/0/resourceGroups/rg-mpo-dev/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-cl-sales-dev", "client_id": "44444444-4444-4444-4444-444444444444", "principal_name": "id-cl-sales-dev" }
+      "example_sales": { "resource_id": "/subscriptions/0/resourceGroups/rg-mpo-dev/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-cl-sales-dev", "client_id": "44444444-4444-4444-4444-444444444444", "principal_name": "id-cl-sales-dev" },
+      "mpo_ops": { "resource_id": "/subscriptions/0/resourceGroups/rg-mpo-dev/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-cl-mpo-ops-dev", "client_id": "88888888-8888-8888-8888-888888888888", "principal_name": "id-cl-mpo-ops-dev" }
     }
   },
   "auth": {

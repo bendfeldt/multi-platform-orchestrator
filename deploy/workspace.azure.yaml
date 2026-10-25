@@ -5,3 +5,7 @@ load_from:
       host: cl-example-sales
       port: 80
       location_name: example_sales
+  - grpc_server:
+      host: cl-mpo-ops
+      port: 80
+      location_name: mpo_ops

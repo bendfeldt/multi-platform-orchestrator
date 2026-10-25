@@ -29,6 +29,7 @@ def test_every_container_runs_as_the_intended_identity():
         "app-dagster-daemon.yaml": ids.platform,
         "job-dagster-migrate.yaml": ids.admin,
         "job-dagster-cleanup.yaml": ids.admin,
+        "job-dagster-health.yaml": ids.admin,
     } | {f"app-{app_name(loc)}.yaml": ids.domains[loc] for loc in CODE_LOCATIONS}
 
     assert set(resources) == set(expected)

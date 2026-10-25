@@ -146,6 +146,7 @@ def render(contract: Contract, images: dict[str, str]) -> dict[str, dict[str, An
         raise ValueError(f"contract has no identity for code locations {missing}")
     ids = contract.identities
     platform_image = images["platform"]
+    ui_url = f"https://{contract.ingress.hostname}"  # links in alerts
     web_ingress = {
         "external": True,
         "targetPort": 3000,
@@ -203,6 +204,15 @@ def render(contract: Contract, images: dict[str, str]) -> dict[str, dict[str, An
             _common_env(contract, ids.admin),
             schedule="17 3 * * *",
         ),
+        # Alerts on what sensors cannot see: daemon down, failed ticks, broken code locations.
+        "job-dagster-health.yaml": _job(
+            contract,
+            ids.admin,
+            platform_image,
+            ["python", "-m", "orchestrator_core.health", WORKSPACE],
+            _common_env(contract, ids.admin) | {"MPO_UI_URL": ui_url},
+            schedule="*/5 * * * *",
+        ),
     }
     for location in CODE_LOCATIONS:
         identity = ids.domains[location]
@@ -238,7 +248,7 @@ def render(contract: Contract, images: dict[str, str]) -> dict[str, dict[str, An
             identity,
             images[location],
             command,
-            _common_env(contract, identity) | run_env,
+            _common_env(contract, identity) | run_env | {"MPO_UI_URL": ui_url},
             # Plain HTTP/2 inside the environment only; gRPC from the webserver and daemon.
             {"external": False, "targetPort": 4000, "transport": "http2", "allowInsecure": True},
             min_replicas=1,
