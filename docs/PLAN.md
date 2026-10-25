@@ -326,10 +326,10 @@ built-in authentication (Easy Auth) with Entra ID.
   origin unhealthy, and would keep the webservers from scaling to zero.
 - Private Link connection approved by Terraform (cross-subscription when environments are in
   separate subscriptions).
-- **Two Entra app registrations per environment**: `mpo-ui-<env>` (full webserver) and
-  `mpo-ui-ro-<env>` (read-only). User assignment required: only `Dagster-Operators` on the full
-  app; `Dagster-Viewers` + `Dagster-Operators` on the read-only app. A viewer cannot sign in to
-  the full webserver.
+- **One Entra app registration per environment** (`mpo-ui-<env>`) with app roles
+  `Dagster.Viewer`, `Dagster.Admin`, `Dagster.Launcher.<domain>`, `Dagster.Editor.<domain>`;
+  user assignment required. One webserver enforces the roles per code location
+  ([PRO_FEATURES_PLAN.md](PRO_FEATURES_PLAN.md) §2).
 - **Conditional Access**: MFA, compliant device, block risky sign-ins.
 - HTTPS only, managed certificates on Front Door, Easy Auth configured for the forwarded host
   (`X-Forwarded-Host`) so redirects use the Front Door domain.

@@ -36,12 +36,10 @@ class ComputeLogs(BaseModel):
 class Auth(BaseModel):
     tenant_id: str
     ui_app_client_id: str
-    ui_ro_app_client_id: str
 
 
 class Ingress(BaseModel):
-    full_hostname: str
-    readonly_hostname: str
+    hostname: str
 
 
 class Databricks(BaseModel):
@@ -64,7 +62,8 @@ class Platforms(BaseModel):
 
 
 class Contract(BaseModel):
-    schema_version: Literal[1]
+    # 2: one webserver with Entra roles (no read-only app or hostname).
+    schema_version: Literal[2]
     environment: Literal["dev", "test", "prod"]
     location: str
     subscription_id: str

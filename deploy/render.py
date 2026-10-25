@@ -152,27 +152,25 @@ def render(contract: Contract, images: dict[str, str]) -> dict[str, dict[str, An
         "transport": "http",
         "allowInsecure": False,
     }
-    webserver = ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000", "-w", WORKSPACE]
+    # Our webserver: Dagster's UI with Entra roles per code location and the audit log.
+    webserver = ["python", "-m", "orchestrator_core.webserver", "-h", "0.0.0.0", "-p", "3000"]
+    webserver += ["-w", WORKSPACE]
 
-    resources = {
-        "app-dagster-web.yaml": _app(
+    def web(ingress: dict[str, Any]) -> dict[str, Any]:
+        return _app(
             contract,
             ids.webserver,
             platform_image,
             webserver,
             _common_env(contract, ids.webserver),
-            web_ingress,
+            ingress,
             min_replicas=0,
-        ),
-        "app-dagster-web-ro.yaml": _app(
-            contract,
-            ids.webserver,
-            platform_image,
-            [*webserver, "--read-only"],
-            _common_env(contract, ids.webserver),
-            web_ingress,
-            min_replicas=0,
-        ),
+        )
+
+    resources = {
+        "app-dagster-web.yaml": web(web_ingress),
+        # First deploy only: reachable inside the environment until Entra sign-in is on.
+        "app-dagster-web.initial.yaml": web(web_ingress | {"external": False}),
         "app-dagster-daemon.yaml": _app(
             contract,
             ids.platform,

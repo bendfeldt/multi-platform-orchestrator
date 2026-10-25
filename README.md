@@ -47,7 +47,12 @@ No secrets in either: Azure login is federated, and the variables are IDs and UR
 repo creates the identities and publishes each environment's contract at `CONTRACT_URL`.
 
 `deploy/scripts/deploy.sh` renders the apps from the contract (`deploy/render.py`), runs the
-in-VNet migrate job, then updates code servers, daemon, webservers and the cleanup job.
+in-VNet migrate job, then updates code servers, daemon, cleanup job and the webserver.
+
+In Azure the UI runs `orchestrator_core.webserver`: Dagster's webserver with Entra app roles
+per code location (`Dagster.Viewer`, `Dagster.Launcher.<domain>`, `Dagster.Editor.<domain>`,
+`Dagster.Admin`) and an audit log of every UI action. Runs launched from the UI carry the
+user in the `mpo/launched_by` tag. Each table has exactly one writing domain.
 
 ## Add a domain
 

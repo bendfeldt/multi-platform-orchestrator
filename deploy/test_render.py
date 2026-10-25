@@ -25,7 +25,7 @@ def test_every_container_runs_as_the_intended_identity():
     ids = CONTRACT.identities
     expected = {
         "app-dagster-web.yaml": ids.webserver,
-        "app-dagster-web-ro.yaml": ids.webserver,
+        "app-dagster-web.initial.yaml": ids.webserver,
         "app-dagster-daemon.yaml": ids.platform,
         "job-dagster-migrate.yaml": ids.admin,
         "job-dagster-cleanup.yaml": ids.admin,
@@ -49,14 +49,21 @@ def test_runs_inherit_the_domain_identity_not_the_daemons():
         assert f"DAGSTER_PG_USER={domain.principal_name}" in context["env_vars"]
 
 
-def test_only_webservers_are_reachable_from_front_door():
+def test_only_the_webserver_is_reachable_from_front_door():
     resources = render(CONTRACT, IMAGES)
     external = {
         name
         for name, r in resources.items()
         if r["properties"]["configuration"].get("ingress", {}).get("external")
     }
-    assert external == {"app-dagster-web.yaml", "app-dagster-web-ro.yaml"}
+    assert external == {"app-dagster-web.yaml"}
+
+
+def test_webserver_runs_with_entra_roles_and_audit():
+    resources = render(CONTRACT, IMAGES)
+    for name in ("app-dagster-web.yaml", "app-dagster-web.initial.yaml"):
+        command = resources[name]["properties"]["template"]["containers"][0]["command"]
+        assert command[:3] == ["python", "-m", "orchestrator_core.webserver"], name
 
 
 def test_code_location_without_identity_is_refused():

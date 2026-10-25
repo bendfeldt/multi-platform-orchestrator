@@ -1,0 +1,50 @@
+"""The Dagster UI with Entra roles and an audit log; replaces `dagster-webserver` in Azure.
+
+    python -m orchestrator_core.webserver -h 0.0.0.0 -p 3000 -w /opt/dagster/workspace.yaml
+
+Mirrors `dagster-webserver`'s own startup (dagster_webserver/cli.py) with our process context
+and middleware. Locally, the plain `dagster-webserver` still runs (no sign-in there).
+"""
+
+import argparse
+
+import uvicorn
+from dagster import DagsterInstance
+from dagster._core.workspace.load_target import WorkspaceFileTarget
+from dagster_webserver.version import __version__
+from dagster_webserver.webserver import DagsterWebserver
+from starlette.middleware import Middleware
+
+from orchestrator_core.access import EntraWorkspaceProcessContext
+from orchestrator_core.audit import GraphQLAuditMiddleware
+
+# dagster-webserver's defaults for its long-running database connections.
+_STATEMENT_TIMEOUT_MS = 15000
+_POOL_RECYCLE_S = 3600
+_POOL_MAX_OVERFLOW = 20
+
+
+class AuditedWebserver(DagsterWebserver):
+    def build_middleware(self) -> list[Middleware]:
+        return [*super().build_middleware(), Middleware(GraphQLAuditMiddleware)]
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, add_help=False)
+    parser.add_argument("-h", "--host", default="127.0.0.1")
+    parser.add_argument("-p", "--port", type=int, default=3000)
+    parser.add_argument("-w", "--workspace", required=True)
+    args = parser.parse_args()
+
+    instance = DagsterInstance.get()
+    instance.optimize_for_webserver(_STATEMENT_TIMEOUT_MS, _POOL_RECYCLE_S, _POOL_MAX_OVERFLOW)
+    with EntraWorkspaceProcessContext(
+        instance,
+        workspace_load_target=WorkspaceFileTarget(paths=[args.workspace]),
+        version=__version__,
+    ) as context:
+        uvicorn.run(AuditedWebserver(context).create_asgi_app(), host=args.host, port=args.port)
+
+
+if __name__ == "__main__":
+    main()

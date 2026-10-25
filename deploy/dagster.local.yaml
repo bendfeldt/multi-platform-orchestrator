@@ -9,6 +9,11 @@ storage:
       port: 5432
 
 # Default run launcher: each run is a process in its code-location container.
+# Queues runs like the default coordinator and tags UI-launched runs with the signed-in user.
+run_coordinator:
+  module: orchestrator_core.run_coordinator
+  class: AuditedRunCoordinator
+
 concurrency:
   runs:
     max_concurrent_runs: 5

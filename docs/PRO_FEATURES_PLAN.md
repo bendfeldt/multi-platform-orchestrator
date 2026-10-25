@@ -1,6 +1,7 @@
 # Dagster+ Pro Features on Open-Source Dagster — Plan
 
-Status: **plan, researched; nothing implemented yet.** Builds on [PLAN.md](PLAN.md).
+Status: **Phase A (role-based access and audit) implemented and tested; phases B–H planned.**
+Builds on [PLAN.md](PLAN.md). Decisions in §11.
 
 How every statement here was checked:
 
@@ -280,12 +281,29 @@ health job ≈ $3; Log Analytics ingestion for audit/alerts/insights a few GB �
 Eventhouse uses Fabric capacity units (on your existing capacity); Purview and zone
 redundancy only if chosen.
 
-**Decisions needed from you:**
-1. Confirm the Entra tenant has P1 (group-to-role assignment, sign-in log export).
-2. Alert channels: email addresses and/or Teams channels per team.
-3. Fabric cost tracking needs a capacity admin to route capacity events to an Eventhouse; OK?
-4. Purview: yes/no later.
-5. Previews: OK that approved pull-request code runs against dev data?
+**Decisions (2026-10-25):**
+1. Entra ID P1 at least, usually P2: group-to-role assignment is available.
+2. Alert channels: all action-group receiver types are supported in `alerts.yaml` (email,
+   SMS, voice, push, Teams via Logic App, webhook with Entra auth, ITSM, Event Hubs).
+3. Fabric cost tracking: yes. The Eventstream and Eventhouse are **not** created by Terraform;
+   a capacity admin creates them, and their query URI and database are configuration inputs.
+4. Purview: yes (phase H). Uses the tenant's existing Purview account (Microsoft provides one
+   per tenant); its endpoint is an input, nothing is created by Terraform.
+5. Previews running approved pull-request code against dev data: yes.
+
+**Phase A, as built:**
+- `orchestrator_core.access` (roles → per-location permissions), `orchestrator_core.audit`
+  (mutation log middleware), `orchestrator_core.run_coordinator` (`mpo/launched_by` tag; a
+  separate module because every Dagster process loads it and only the webserver has the
+  GraphQL packages), `orchestrator_core.webserver` (entry point).
+- 13 tests against the real GraphQL API with two code locations, plus a run of the real entry
+  point over HTTP. A mutation check (Launchers given every right) makes two of them fail.
+- One webserver instead of two; contract `schema_version` 2 (no read-only app or hostname).
+- A new webserver starts with internal-only ingress until Entra sign-in is on, so it is never
+  reachable from Front Door without sign-in.
+- Found while testing: Dagster checks an asset launch against the code location that defines
+  the asset, so **each table must have exactly one writing domain**; other domains list it
+  under `reads:`.
 
 ## 12. Sources
 
