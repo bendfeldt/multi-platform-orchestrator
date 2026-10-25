@@ -1,0 +1,311 @@
+# Dagster+ Pro Features on Open-Source Dagster — Plan
+
+Status: **plan, researched; nothing implemented yet.** Builds on [PLAN.md](PLAN.md).
+
+How every statement here was checked:
+
+- **[S]** read in the installed source (Dagster 1.13.26, dagster-graphql, dagster-webserver,
+  dagster-dbt / dagster-azure 0.29.26, dagster-powerbi 0.29.26)
+- **[P]** proven by a prototype against the real webserver and GraphQL API, see
+  [research/pro_features](../research/pro_features/README.md)
+- **[D]** vendor documentation (links in §12)
+- **[?]** not verifiable without Azure / the platforms → listed as a spike (§10)
+
+dagster.io could not be opened from the research environment, so the Pro feature list
+comes from search results quoting the pricing page (§12). Confirm it against
+https://dagster.io/pricing before relying on it.
+
+## 1. The gaps to close
+
+| # | Pro feature | Open-source Dagster today | Plan |
+|---|---|---|---|
+| F1 | Role-based access control | Read-only or full access for everyone ([S]) | §2: roles per code location from Entra app roles |
+| F2 | Audit logs | None | §3: who signed in, who launched what, every UI action |
+| F3 | Alert policies | Sensors in code ([S]) | §4: alert sensors + Azure Monitor delivery, no secrets |
+| F4 | Insights and cost tracking | None; `with_insights()` needs closed-source `dagster_cloud` ([S]) | §5: run metrics + Snowflake/Databricks/Fabric cost per asset |
+| F5 | Catalog: column search and lineage, BI assets | Asset catalog with most filters; column/table/status filters and column-lineage graph are Dagster+-only ([S]) | §6: column metadata, Power BI assets, optional Purview |
+| F6 | Branch deployments | None | §7: change report on every PR + approved preview locations |
+| F7 | Uptime SLA | None | §8: health checks, alerts, SLOs, optional zone redundancy |
+| F8 | Security questionnaires | None | §9: security pack from the code |
+| F9 | Onboarding, private Slack, vendor support | — | Not buildable: services, not software (§9) |
+
+Already covered by the current solution: unlimited code locations and deployments, SSO
+(Entra), user provisioning (Entra assignment), EU data residency, Hybrid-style compute.
+
+## 2. F1 — Role-based access control per domain
+
+### 2.1 What was found
+
+- The GraphQL server checks every UI action against permissions **per code location** [S]:
+  launch, re-execute, terminate, delete run, schedules, sensors, backfills, dynamic partitions,
+  wipe assets, reload location. Only reload-workspace, auto-materialize toggle and concurrency
+  limits are global (`LOCATION_SCOPED_PERMISSIONS`, `dagster/_core/workspace/permissions.py`).
+- Actions on **existing runs** (terminate, delete, re-execute) are checked against the run's
+  own code location (`has_permission_for_run`, `dagster_graphql/implementation/utils.py`) [S].
+- The webserver builds a request context per request from the HTTP connection:
+  `WorkspaceProcessContext.create_request_context(source=conn)` [S]. The request context
+  already supports per-location read-only (`read_only_locations`) [S], and its
+  `permissions_for_location` can be overridden for finer roles [P].
+- `dagster-webserver` is a thin CLI around `WorkspaceProcessContext` and
+  `host_dagster_ui_with_workspace_process_context` [S], so a custom entry point can serve the
+  same UI with our own process context.
+- Container Apps puts the signed-in user's claims in `X-MS-CLIENT-PRINCIPAL` (Base64 JSON) and
+  `X-MS-CLIENT-PRINCIPAL-NAME`; external requests cannot set these headers [D].
+- Entra puts app roles in the ID token's `roles` claim, also when granted through a group;
+  group-to-role assignment needs Entra ID P1 [D] (Conditional Access in PLAN.md already does).
+
+Prototype result [P] (`rbac_proto.py`, `roles_proto.py`):
+
+| Caller | Launch in `example_sales` | Edit sensor | Reload location | Reload workspace |
+|---|---|---|---|---|
+| no header / Viewer / other domain's role | refused | refused | refused | refused |
+| `Dagster.Launcher.example_sales` | allowed | refused | refused | refused |
+| `Dagster.Editor.example_sales` | allowed | allowed | allowed | refused |
+| `Dagster.Admin` | allowed | allowed | allowed | allowed |
+
+### 2.2 Design
+
+- **Roles** (Dagster+'s model), as app roles on one Entra app `mpo-ui-<env>`:
+  - `Dagster.Viewer` — read everything (the default for any assigned user)
+  - `Dagster.Launcher.<location>` — launch, re-execute, terminate runs, launch/cancel backfills
+  - `Dagster.Editor.<location>` — everything scoped to that location
+  - `Dagster.Admin` — everything, including global settings
+- Groups are assigned to roles in Terraform (`azuread_app_role_assignment`), generated from
+  the domain files: each `domains/<env>/<name>.yaml` gains `launchers:` / `editors:` group IDs.
+- `orchestrator_core.webserver` (new entry point, replaces `dagster-webserver` in the image):
+  `EntraWorkspaceProcessContext` decodes `X-MS-CLIENT-PRINCIPAL`, accepts both the `roles`
+  claim and the mapped `role_typ` URI, and returns a `RoleRequestContext`. Global read-only
+  unless `Dagster.Admin`; **deny by default**: no header or an unparsable header means Viewer.
+- **One webserver instead of two.** The read-only webserver and its second Entra app become
+  unnecessary; Viewers use the same URL. Removes one container app, one Entra app, one Front
+  Door endpoint/route.
+- Schedules and sensors still run as the daemon; roles only govern people.
+- Later option: owner-based permissions. The context also has `permissions_for_owner` [S], so
+  roles like `Dagster.Editor.team:finance` could cover assets by `owners`.
+
+### 2.3 Risks
+
+- Uses Dagster internals (`dagster._core.workspace.*`). Mitigation: Dagster stays pinned; the
+  prototypes become tests that run in CI against the real GraphQL API, so a Dependabot upgrade
+  that breaks the hook fails before merge.
+- The header is only trustworthy behind Container Apps auth [D]. The webserver must never get
+  another ingress path: render.py tests already assert only the webserver is external; add a
+  test that its auth config is enabled.
+
+## 3. F2 — Audit logs
+
+| What | How | Verified |
+|---|---|---|
+| Who signed in | Entra sign-in logs → Log Analytics (diagnostic setting) | [?] not researched here: licence and retention in your tenant |
+| Who launched a run | `AuditedRunCoordinator` (subclass of `QueuedRunCoordinator`) reads `X-MS-CLIENT-PRINCIPAL-NAME` via `SubmitRunContext.get_request_header` and tags the run `mpo/launched_by` — visible and filterable in the run list | [S] [P] |
+| Every UI action (terminate, wipe, sensor edits, backfills, ...) | ASGI middleware on our webserver: logs each GraphQL **mutation** (user, object ID, mutation names, variables, result type) as one JSON line to stdout → `ContainerAppConsoleLogs_CL` | [P] middleware; [D] table |
+| Infra and deployment changes | Azure Activity Log + the Git history of both repos | [?] Activity Log retention not researched here |
+| Long-term, tamper-evident copy | Optional: Log Analytics data export to a storage container with an immutability policy | [?] spike, cost |
+
+Notes:
+- Backfills launched from the UI create their runs later in the daemon, so the user is only
+  in the mutation log, not on those runs [S].
+- Variables are logged as sent; none of ours carry secrets (there are none).
+
+## 4. F3 — Alert policies, without secrets
+
+### 4.1 Detection (Dagster side)
+
+A new internal code location **`mpo_ops`** (own identity, no business-data access) holds:
+
+| Alert | Mechanism | Verified |
+|---|---|---|
+| Run failure (any domain) | `run_failure_sensor(monitor_all_code_locations=True)` | [S] |
+| Asset check failed / warned | Cursor-based sensor over `ASSET_CHECK_EVALUATION` events (`instance.get_event_records(EventRecordsFilter(..., after_cursor=...))`) | [S] |
+| Freshness violated | Same, `FRESHNESS_STATE_CHANGE` events, written by the open-source freshness daemon (`dagster/_daemon/freshness.py`); policies via `FreshnessPolicy` / `build_last_update_freshness_checks` | [S] |
+
+Not available: "asset health changed". The event type exists, but nothing in open-source
+Dagster emits it [S]; check-failure and freshness alerts cover the same ground.
+
+Each sensor writes one JSON line per alert to stdout: `{"mpo_alert": type, "domain",
+"owners", "asset", "run_id", "url", "summary"}`. Owners come from `AssetSpec.owners`, set by
+the components from the domain file.
+
+Failures a sensor cannot see (the daemon itself down, schedule/sensor tick failures, code
+locations that fail to load) are checked by a **health job**: a scheduled Container Apps Job
+every 5 minutes (same image, admin identity) that reads `get_daemon_statuses()`, failed
+ticks (`all_instigator_state()` + `get_ticks(statuses=[FAILURE])`) and code-location
+`load_error`s, and writes the same JSON lines [S].
+
+### 4.2 Delivery (Azure side, in the infra repo)
+
+- **Log search alert rules** over `ContainerAppConsoleLogs_CL` (`Log_s` holds the line) [D],
+  one per team/channel, generated by Terraform from a new `alerts.yaml` (which alert types,
+  which domains or owners → which action group).
+- **Action groups**: email, SMS, voice, push; Teams through a Logic App action; ITSM, Event
+  Hubs, Entra-secured webhooks [D]. No webhook URL or bot token stored anywhere.
+- An "absence" rule (no health-job line for 15 minutes) catches the health job itself failing.
+
+Alerts are configuration-as-code (pull request), not a settings screen like Dagster+.
+
+## 5. F4 — Insights and cost tracking
+
+### 5.1 Operational insights (Dagster's own data)
+
+A daily `insights` job in `mpo_ops` reads the Dagster instance [S] (`get_run_records`, event
+records) and computes per asset and per job: runs, failures, duration p50/p95, retries,
+materializations, check pass rate, freshness misses.
+
+### 5.2 Cost per asset
+
+| Platform | Source | Join key | Verified |
+|---|---|---|---|
+| Snowflake | `SNOWFLAKE.ACCOUNT_USAGE.QUERY_ATTRIBUTION_HISTORY.CREDITS_ATTRIBUTED_COMPUTE` | `QUERY_TAG` = Dagster run ID + asset key, set by `SnowflakeResource` (session parameter) and by dbt (`+query_tag` from an env var) | [D]: readable with database role `USAGE_VIEWER`; up to 8 h latency; queries ≤ ~100 ms and idle time not attributed |
+| Databricks | `system.billing.usage` ⋈ `system.billing.list_prices` | `usage_metadata.job_run_id` — already stored by `DatabricksResource` as `run_id` | [D]: only job and serverless compute; list prices; for classic compute the Azure VM cost is separate |
+| Fabric | Capacity operation events (`Microsoft.Fabric.CapacityOperationEvents.Operation`) via Real-Time hub → Eventstream → Eventhouse | `itemId` + run time window; `operationId` if it equals the job instance ID | [D] fields `workspaceId`, `itemId`, `operationId`, `capacityUnitMs`; [?] whether `operationId` matches our job instance ID |
+
+### 5.3 Where it shows
+
+- **In the Dagster UI**: the job emits `AssetObservation`s with numeric metadata (`cost_usd`,
+  `credits`, `duration_s`, ...). The open-source asset page charts numeric metadata of
+  materializations **and observations** ("Plots") [S: UI bundle text "Include numeric
+  metadata entries in your materializations and observations to see data graph"].
+- **Across assets**: the same rows go to a Log Analytics custom table through the Logs
+  Ingestion API (`azure-monitor-ingestion`, `DefaultAzureCredential`, role *Monitoring
+  Metrics Publisher* on the data collection rule) [D], shown in an Azure Monitor Workbook
+  (in Terraform) or Power BI.
+
+### 5.4 Access for `mpo_ops`
+
+Read-only, platform-metadata only, no business data:
+- Snowflake: database role `SNOWFLAKE.USAGE_VIEWER` [D]
+- Databricks: `SELECT` on `system.billing` and `system.lakeflow` (granted by a metastore admin)
+- Fabric: Viewer on the monitoring Eventhouse
+- Azure: *Monitoring Metrics Publisher* on the data collection rule
+- Postgres: `dagster_rw` like every Dagster process (reads run history)
+
+## 6. F5 — Catalog
+
+### 6.1 What open source already does [S]
+
+Catalog filters in the UI bundle: key, kind, code location, group, owner, tag, partitions,
+automation, sensor, schedule, job, flag. Marked Dagster+-only: column, column tag, table
+name, status, changed-in-branch. Column lineage (`dagster/column_lineage`) and schema
+(`dagster/column_schema`) metadata are stored and displayed, but lineage only as JSON, not as
+a graph.
+
+### 6.2 Plan
+
+1. **Make the free filters useful**: components set `owners` (from domain file), `kinds`
+   (already), `tags` (domain, layer, PII flag) and `group_name` consistently.
+2. **Column schema and lineage metadata**: dbt via the component's column metadata option
+   (`fetch_column_metadata(with_column_lineage=True)`, uses sqlglot) [S]; other components get
+   an optional `columns:` block.
+3. **BI assets**: `dagster-powerbi` (open source) [S] with a small `EntraPowerBICredentials`
+   subclass of its abstract `PowerBICredentials` (`api_token` → our managed-identity token), so
+   no client secret [S]. Use its default (non-scan) mode; scan mode needs Power BI admin APIs
+   [S]. Semantic models and reports join the lineage graph.
+4. **Optional, for column-level search and lineage graphs across platforms**: Microsoft
+   Purview. Native scanners for Snowflake, Databricks and Fabric; Dagster lineage pushed through
+   the Purview REST API, including column mappings [D]. Cost reported by third parties as
+   ≈ $0.50 per governed asset per month on pay-as-you-go [D, third-party — verify]. Decide
+   after F1–F4.
+
+Rejected: Marquez/OpenLineage for column lineage. Column lineage is confirmed in Marquez's
+API, but not in its UI [D].
+
+## 7. F6 — Branch deployments
+
+Two parts, keeping the rule that pull-request code never gets cloud credentials:
+
+1. **Change report on every pull request (no credentials)**: CI loads the definitions of
+   `main` and of the pull request and posts a comment listing added/removed/changed assets,
+   dependencies, checks, partitions, automation and code versions. This covers Dagster+'s
+   "changed in branch" view.
+2. **Preview on approval**: a reviewer approves the GitHub (or ADO) environment `preview`. Only
+   then a job deploys the pull request's code location into **dev** as `<domain>-pr<N>`, with
+   automation off, and removes it when the pull request closes.
+   - The workspace file moves from the image to a Container Apps secret-volume mount, so
+     adding a location needs no image rebuild [D: secrets mount as files].
+   - Runs use the domain's dev identity and dev data, like any dev run.
+   - Federated credential with subject `environment:preview` on the dev app deployer.
+
+Difference from Dagster+: previews share dev's metadata database and UI rather than getting a
+separate deployment each; a separate one per pull request would add a database, daemon and
+webserver per preview.
+
+## 8. F7 — Uptime
+
+| Item | How | Cost |
+|---|---|---|
+| Liveness | Container Apps probes: HTTP `/server_info` on the webserver (endpoint exists [S]), TCP on the gRPC code servers | free |
+| Restarts, failed revisions | Azure Monitor metric alerts | ~free |
+| Daemon down, tick failures, location errors | Health job (§4.1) + absence alert | ≈ $3/month (8,640 runs × ~20 s at 0.5 vCPU) |
+| SLOs | `docs/SLO.md`: UI availability, schedule latency, run-start latency, with the queries | — |
+| Restore | Runbook + quarterly test of Postgres point-in-time restore | — |
+| Zone redundancy (optional) | Container Apps environment zone-redundant (needs ≥ 2 replicas of webserver and daemon); Postgres zone-redundant HA doubles its cost | [?] prices to confirm |
+
+No external party guarantees this; it is your SLA to run.
+
+## 9. F8 / F9 — Security pack and support
+
+- **F8**: `docs/SECURITY.md` built from the code: architecture and data flows, identity matrix
+  (from Terraform), no-secrets statement, network exposure, encryption, logging and
+  retention, test evidence (Terraform tests, render tests, RBAC tests), Trivy results.
+  Answers most vendor questionnaires.
+- **F9**: Dagster's community Slack and GitHub issues remain the only Dagster support;
+  internal runbooks and an on-call rotation replace a private channel.
+
+## 10. Spikes (need Azure or the platforms)
+
+| # | Question | Pass criterion |
+|---|---|---|
+| S1 | Container Apps passes `roles` in `X-MS-CLIENT-PRINCIPAL` for group-assigned app roles | Header decoded in a test app shows the role values |
+| S2 | Fabric `operationId` equals the job instance ID returned by Run On Demand Item Job | Same ID in both; else use item ID + time window |
+| S3 | Snowflake `QUERY_TAG` set by the resource and by dbt appears in `QUERY_ATTRIBUTION_HISTORY` | Tagged rows with credits for a test run |
+| S4 | Log search alert → action group → email and Teams (Logic App) | Alert delivered within 10 min of a failed run |
+| S5 | Workspace file from a secret volume, reloaded without image rebuild | Preview location appears in the UI |
+| S6 | Purview custom lineage with column mappings renders | Column edges visible (only if Purview is chosen) |
+
+## 11. Delivery
+
+| Phase | Content | Depends on |
+|---|---|---|
+| A | F1 RBAC + one webserver; F2 audit (coordinator tag, mutation log); RBAC/audit tests in CI | S1 |
+| B | `mpo_ops` code location + identity; F3 alerts (sensors, health job, Terraform alert rules) | S4 |
+| C | F4 insights: Dagster metrics, Snowflake + Databricks cost, UI plots, Workbook | S3 |
+| D | F4 Fabric cost (Eventstream/Eventhouse) | S2 |
+| E | F5 catalog: owners/tags, column metadata, Power BI assets | — |
+| F | F6 change report, then previews | S5 |
+| G | F7 uptime items, F8 security pack | A–C |
+| H | Optional: Purview (F5.4), zone redundancy (F7) | decisions |
+
+**Cost delta (rough):** −1 container app and endpoint (single webserver) ≈ −$12/month in prod;
+health job ≈ $3; Log Analytics ingestion for audit/alerts/insights a few GB ≈ $5–15; Fabric
+Eventhouse uses Fabric capacity units (on your existing capacity); Purview and zone
+redundancy only if chosen.
+
+**Decisions needed from you:**
+1. Confirm the Entra tenant has P1 (group-to-role assignment, sign-in log export).
+2. Alert channels: email addresses and/or Teams channels per team.
+3. Fabric cost tracking needs a capacity admin to route capacity events to an Eventhouse; OK?
+4. Purview: yes/no later.
+5. Previews: OK that approved pull-request code runs against dev data?
+
+## 12. Sources
+
+- Pricing (third-party summaries of dagster.io/pricing): https://panoply.io/tools/dagster/pricing/ ·
+  https://datapipelinetool.com/vendor/dagster · https://markaicode.com/pricing/dagster-pricing/
+- Container Apps authentication and headers: https://learn.microsoft.com/en-us/azure/container-apps/authentication ·
+  https://learn.microsoft.com/en-us/azure/app-service/configure-authentication-user-identities
+- Entra app roles in tokens, group assignment licensing: https://learn.microsoft.com/en-us/entra/identity-platform/howto-add-app-roles-in-apps ·
+  https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/assign-user-or-group-access-portal ·
+  https://learn.microsoft.com/en-us/entra/architecture/customize-tokens
+- Container Apps logs table: https://learn.microsoft.com/en-us/azure/container-apps/log-monitoring
+- Action groups: https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/action-groups
+- Logs Ingestion API (Python): https://learn.microsoft.com/en-us/python/api/overview/azure/monitor-ingestion-readme ·
+  https://learn.microsoft.com/en-us/azure/azure-monitor/logs/logs-ingestion-api-overview
+- Snowflake query attribution: https://docs.snowflake.com/en/sql-reference/account-usage/query_attribution_history ·
+  https://docs.snowflake.com/en/user-guide/cost-attributing · https://docs.snowflake.com/en/sql-reference/snowflake-db-roles
+- Databricks job cost: https://docs.databricks.com/aws/en/admin/system-tables/jobs-cost ·
+  https://learn.microsoft.com/en-us/azure/databricks/admin/system-tables/billing
+- Fabric capacity events: https://learn.microsoft.com/en-us/fabric/real-time-hub/explore-fabric-capacity-operation-events
+- Container Apps secret volumes: https://learn.microsoft.com/en-us/azure/container-apps/manage-secrets
+- Purview custom lineage and pricing: https://learn.microsoft.com/en-us/purview/data-gov-api-create-lineage-relationships ·
+  https://datatrail.ai/blog/microsoft-purview-pricing (third-party)
+- Marquez column lineage: https://marquezproject.ai/blog/column-lineage-demo

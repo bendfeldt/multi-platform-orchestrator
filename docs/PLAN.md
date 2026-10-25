@@ -265,7 +265,8 @@ Dev/test identities never have prod access.
 - **Domain separation does not cover people.** In open-source Dagster any Operator can launch
   any domain's job, which then runs with that domain's identity. If people must be separated per
   domain, the options are Dagster+ (role-based access) or one deployment per domain. No custom
-  access layer is built.
+  access layer is built. *Update:* open-source Dagster turned out to support per-code-location
+  permissions through its request context; see [PRO_FEATURES_PLAN.md](PRO_FEATURES_PLAN.md) §2.
 
 ### 5.3 Subscription layout (both supported)
 

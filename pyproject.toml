@@ -16,6 +16,8 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py313"
+# research/: throwaway prototypes kept as evidence for docs/PRO_FEATURES_PLAN.md.
+extend-exclude = ["research"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
