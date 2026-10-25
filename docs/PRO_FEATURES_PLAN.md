@@ -1,6 +1,6 @@
 # Dagster+ Pro Features on Open-Source Dagster — Plan
 
-Status: **Phases A (role-based access, audit), B (alerts) and C (cost and insights) implemented and tested; phases D–H planned.**
+Status: **Phases A (role-based access, audit), B (alerts), C (cost and insights) and D (Fabric cost) implemented and tested; phases E–H planned.**
 Builds on [PLAN.md](PLAN.md). Decisions in §11.
 
 How every statement here was checked:
@@ -171,7 +171,7 @@ materializations, check pass rate, freshness misses.
 |---|---|---|---|
 | Snowflake | `SNOWFLAKE.ACCOUNT_USAGE.QUERY_ATTRIBUTION_HISTORY.CREDITS_ATTRIBUTED_COMPUTE` (+ query acceleration credits) | `QUERY_TAG` = `{"mpo_run","mpo_step"}`, set by `SnowflakeResource` (session parameter) and by dbt (profile `query_tag` from `MPO_QUERY_TAG`); a shipped dbt macro adds `mpo_dbt_node` per model | [D]: readable with database role `USAGE_VIEWER`; up to 8 h latency; queries ≤ ~100 ms and idle time not attributed |
 | Databricks | `system.billing.usage` ⋈ `system.billing.list_prices` (`pricing.effective_list.default`, the price Databricks documents for cost) | `usage_metadata.job_run_id` — stored on materializations as `databricks_run_id` | [D]: only job and serverless compute; list prices; for classic compute the Azure VM cost is separate |
-| Fabric | Capacity operation events (`Microsoft.Fabric.CapacityOperationEvents.Operation`) via Real-Time hub → Eventstream → Eventhouse | `itemId` + run time window; `operationId` if it equals the job instance ID | [D] fields `workspaceId`, `itemId`, `operationId`, `capacityUnitMs`; [?] whether `operationId` matches our job instance ID |
+| Fabric | Capacity operation events (`Microsoft.Fabric.CapacityOperationEvents.Operation`) via Real-Time hub → Eventstream → Eventhouse, read through the KQL function `MpoCapacityOperations` | `operationId` = the job instance / refresh ID a materialization recorded; else `itemId` + the run's time window | [D] fields `workspaceId`, `itemId`, `operationId` ("unique run ID for the operation"), `capacityUnitMs`, `operationStartTime`, `releaseType` (Preview is unbilled); [?] whether `operationId` equals our job instance ID (S2) |
 
 ### 5.3 Where it shows
 
@@ -274,10 +274,11 @@ No external party guarantees this; it is your SLA to run.
 | S3 | Snowflake `QUERY_TAG` set by the resource and by dbt appears in `QUERY_ATTRIBUTION_HISTORY` | Tagged rows with credits for a test run |
 | S4 | Log search alert → action group → email and Teams (Logic App) | Alert delivered within 10 min of a failed run |
 | S5 | Workspace file from a secret volume, reloaded without image rebuild | Preview location appears in the UI |
-| S6 | Purview custom lineage with column mappings renders | Column edges visible (only if Purview is chosen) |
+| S6 | Purview custom lineage with column mappings renders | Column edges visible |
 | S7 | Event Hub receiver without a managed identity: does the hub need a role? | Alert arrives on the hub; note any role needed |
 | S8 | May the infra role (`MANAGE GRANTS`) grant `SNOWFLAKE.USAGE_VIEWER`? | Grant succeeds from Terraform; then `cost_access.sql` moves into Terraform |
 | S9 | The dbt query-tag macro on dbt-snowflake | Model queries show `mpo_dbt_node` in `QUERY_HISTORY` |
+| S10 | mpo_ops's managed identity queries the Eventhouse with workspace Viewer; the eventstream table matches `capacity_operations.kql` | The cost job reads operations; else adapt the function or grant |
 
 ## 11. Delivery
 
@@ -355,6 +356,23 @@ redundancy only if chosen.
 - 16 new tests (attribution rules, the real example components' tags end to end, Databricks
   paging and failure, schedules, insights), a mutation check, and the workbook queries parsed
   against the table definitions.
+
+**Phase D, as built:**
+- `cost.fetch_fabric_operations` reads the Eventhouse with `azure-kusto-data` and the
+  managed identity (the client asks the Eventhouse for its token audience); workspace IDs are
+  checked to be GUIDs before they go into the query. CU-hours × the capacity's price per CU
+  hour give USD; Preview operations are counted but not priced.
+- `FabricItemJob` and `FabricSemanticModelRefresh` record workspace and item IDs next to the
+  job instance / refresh ID.
+- Infra: the Eventhouse is an input (`fabric_capacity_events`), not a resource;
+  `fabric/capacity_operations.kql` is the one function to create; mpo_ops gets Viewer on that
+  workspace through its domain file. CI parses the function against the documented event
+  shape and the report's query against the function.
+- Found while testing: the Kusto parser's schema-string form silently drops every column after
+  a keyword name (`time`), which made a correct query look wrong; the CI check now builds
+  tables column by column.
+- 6 more tests (operation ID match, item + time fallback, Preview, the Kusto call, GUID check,
+  the example's Fabric component end to end).
 
 ## 12. Sources
 

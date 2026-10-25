@@ -53,7 +53,8 @@ def test_runs_inherit_the_domain_identity_not_the_daemons():
 def test_only_mpo_ops_gets_the_cost_and_insight_settings():
     resources = render(CONTRACT, IMAGES)
     ops = {"DATABRICKS_COST_WAREHOUSE_ID", "SNOWFLAKE_CREDIT_PRICE_USD", "MPO_INGESTION_ENDPOINT",
-           "MPO_INGESTION_RULE_ID"}  # fmt: skip
+           "MPO_INGESTION_RULE_ID", "FABRIC_EVENTS_QUERY_URI", "FABRIC_EVENTS_DATABASE",
+           "FABRIC_CU_HOUR_PRICE_USD"}  # fmt: skip
     for location in CODE_LOCATIONS:
         container = resources[f"app-{app_name(location)}.yaml"]["properties"]["template"][
             "containers"

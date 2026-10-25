@@ -69,6 +69,12 @@ def _ops_env(contract: Contract, location: str) -> dict[str, str]:
         env["DATABRICKS_COST_WAREHOUSE_ID"] = platforms.databricks.cost_warehouse_id
     if platforms.snowflake and platforms.snowflake.credit_price_usd is not None:
         env["SNOWFLAKE_CREDIT_PRICE_USD"] = str(platforms.snowflake.credit_price_usd)
+    events = platforms.fabric.capacity_events if platforms.fabric else None
+    if events:
+        env["FABRIC_EVENTS_QUERY_URI"] = events.query_uri
+        env["FABRIC_EVENTS_DATABASE"] = events.database
+        if events.cu_hour_price_usd is not None:
+            env["FABRIC_CU_HOUR_PRICE_USD"] = str(events.cu_hour_price_usd)
     if contract.insights:
         env["MPO_INGESTION_ENDPOINT"] = contract.insights.ingestion_endpoint
         env["MPO_INGESTION_RULE_ID"] = contract.insights.rule_id

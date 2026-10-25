@@ -31,6 +31,13 @@
         "mpo_ops": { "role": "MPO_MPO_OPS_DEV", "warehouse": "OPS_WH" }
       },
       "credit_price_usd": 4.0
+    },
+    "fabric": {
+      "capacity_events": {
+        "query_uri": "https://trd-00000000000000000000.z0.kusto.fabric.microsoft.com",
+        "database": "capacity_monitoring",
+        "cu_hour_price_usd": 0.2
+      }
     }
   },
   "insights": {

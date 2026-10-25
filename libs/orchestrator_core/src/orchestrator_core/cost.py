@@ -1,19 +1,25 @@
 """Daily platform cost per asset (docs/PRO_FEATURES_PLAN.md §5.2), run in mpo_ops.
 
-For one UTC day: the finished Dagster runs, the assets they materialized, and what Snowflake
-and Databricks charged for them:
+For one UTC day: the finished Dagster runs, the assets they materialized, and what Snowflake,
+Databricks and Fabric charged for them:
 
 - Snowflake: QUERY_ATTRIBUTION_HISTORY by query tag (query_tag.py). A tag with a dbt node goes
   to that model's asset; a tag with only a step is split over the assets that step wrote.
 - Databricks: system.billing.usage by job run ID (stored on materializations as
   `databricks_run_id`), priced with the effective list price. Runs that fail record no
   materialization, so their Databricks cost cannot be attributed here.
+- Fabric: capacity operation events in an Eventhouse (made outside Terraform), read through the
+  KQL function `MpoCapacityOperations` (infra repo, fabric/capacity_operations.kql). An event
+  whose operationId is the job instance or refresh ID a materialization recorded goes to it;
+  otherwise an event of the same item that started during the run. CU of Preview operations
+  is reported but not priced (Fabric does not bill them).
 
 Results go to the asset pages as observations (numeric metadata, charted under "Plots") and to
-Log Analytics (MpoCost_CL). Fabric follows in phase D.
+Log Analytics (MpoCost_CL).
 """
 
 import os
+import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -22,7 +28,7 @@ from typing import Any
 
 import dagster as dg
 from dagster._core.events import DagsterEventType
-from dagster._core.storage.dagster_run import DagsterRun, DagsterRunStatus, RunsFilter
+from dagster._core.storage.dagster_run import DagsterRun, DagsterRunStatus, RunRecord, RunsFilter
 
 from orchestrator_core import log_ingestion
 from orchestrator_core.components import DATABRICKS_RUN_ID
@@ -32,6 +38,12 @@ from orchestrator_core.resources.snowflake import SnowflakeResource
 
 CREDIT_PRICE_ENV = "SNOWFLAKE_CREDIT_PRICE_USD"  # your contract's price; list prices vary
 COST_WAREHOUSE_ENV = "DATABRICKS_COST_WAREHOUSE_ID"
+FABRIC_URI_ENV = "FABRIC_EVENTS_QUERY_URI"
+FABRIC_DATABASE_ENV = "FABRIC_EVENTS_DATABASE"
+CU_HOUR_PRICE_ENV = "FABRIC_CU_HOUR_PRICE_USD"
+# What FabricItemJob / FabricSemanticModelRefresh record (components.py).
+FABRIC_OPERATION_KEYS = ("fabric_job_instance_id", "refresh_request_id")
+_GUID = re.compile(r"^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
 LOCATION_TAG = "dagster/code_location"
 _FINISHED = [DagsterRunStatus.SUCCESS, DagsterRunStatus.FAILURE, DagsterRunStatus.CANCELED]
 
@@ -61,6 +73,14 @@ WHERE u.workspace_id = :workspace_id
 GROUP BY u.usage_metadata.job_run_id
 """
 
+# Columns MpoCapacityOperations returns, whatever the Eventhouse table looks like.
+FABRIC_KQL = """
+MpoCapacityOperations
+| where OperationStartTime >= datetime({start}) and OperationStartTime < datetime({end})
+| where WorkspaceId in ({workspaces})
+| project OperationId, WorkspaceId, ItemId, OperationStartTime, CapacityUnitMs, ReleaseType
+"""
+
 
 @dataclass(frozen=True)
 class Materialization:
@@ -69,6 +89,19 @@ class Materialization:
     step_key: str
     dbt_node: str | None = None
     databricks_run_id: str | None = None
+    fabric_workspace_id: str | None = None
+    fabric_item_id: str | None = None
+    fabric_operation_id: str | None = None
+
+
+@dataclass(frozen=True)
+class FabricOperation:
+    operation_id: str
+    workspace_id: str
+    item_id: str
+    start: float  # epoch seconds
+    capacity_unit_ms: float
+    billed: bool  # releaseType Public; Preview operations are not billed
 
 
 @dataclass(frozen=True)
@@ -83,16 +116,25 @@ class Cost:
     snowflake_credits: float = 0.0
     databricks_dbus: float = 0.0
     databricks_list_cost: float = 0.0
+    fabric_capacity_unit_ms: float = 0.0
+    fabric_billed_capacity_unit_ms: float = 0.0
     currencies: set[str] = field(default_factory=set)
     runs: set[str] = field(default_factory=set)
 
-    def usd(self, credit_price: float | None) -> float | None:
+    def usd(self, credit_price: float | None, cu_hour_price: float | None = None) -> float | None:
         """Total in USD, or None when a part cannot be priced."""
         if self.snowflake_credits and credit_price is None:
             return None
         if self.databricks_list_cost and self.currencies - {"USD"}:
             return None
-        return self.snowflake_credits * (credit_price or 0.0) + self.databricks_list_cost
+        if self.fabric_billed_capacity_unit_ms and cu_hour_price is None:
+            return None
+        fabric_cu_hours = self.fabric_billed_capacity_unit_ms / 3_600_000
+        return (
+            self.snowflake_credits * (credit_price or 0.0)
+            + self.databricks_list_cost
+            + fabric_cu_hours * (cu_hour_price or 0.0)
+        )
 
 
 @dataclass
@@ -107,18 +149,28 @@ def attribute(
     materializations: Sequence[Materialization],
     snowflake_credits: Mapping[str, float],
     databricks: Mapping[str, DatabricksCost],
+    fabric: Sequence[FabricOperation] = (),
+    run_windows: Mapping[str, tuple[float, float]] | None = None,
 ) -> Attribution:
     """Splits platform cost over the assets that caused it. Pure, so it is tested directly."""
     ours = set(run_ids)
     by_step: dict[tuple[str, str], set[dg.AssetKey]] = defaultdict(set)
     by_node: dict[tuple[str, str], dg.AssetKey] = {}
     by_databricks_run: dict[str, set[tuple[str, dg.AssetKey]]] = defaultdict(set)
+    by_fabric_operation: dict[str, set[tuple[str, dg.AssetKey]]] = defaultdict(set)
+    by_fabric_item: dict[tuple[str, str], set[tuple[str, dg.AssetKey]]] = defaultdict(set)
+    windows = run_windows or {}
     for m in materializations:
         by_step[(m.run_id, m.step_key)].add(m.asset)
         if m.dbt_node:
             by_node[(m.run_id, m.dbt_node)] = m.asset
         if m.databricks_run_id:
             by_databricks_run[m.databricks_run_id].add((m.run_id, m.asset))
+        if m.fabric_operation_id:
+            by_fabric_operation[m.fabric_operation_id.lower()].add((m.run_id, m.asset))
+        if m.fabric_item_id and m.fabric_workspace_id:
+            item = (m.fabric_workspace_id.lower(), m.fabric_item_id.lower())
+            by_fabric_item[item].add((m.run_id, m.asset))
 
     result = Attribution(defaultdict(Cost), defaultdict(Cost), defaultdict(Cost))
 
@@ -150,19 +202,36 @@ def attribute(
                 cost.currencies.add(spend.currency)
             result.assets[asset].runs.add(run)
 
+    for op in fabric:
+        targets = by_fabric_operation.get(op.operation_id.lower(), set())
+        if not targets:  # the same item, started while one of our runs ran
+            same_item = by_fabric_item.get((op.workspace_id.lower(), op.item_id.lower()), set())
+            targets = {
+                (run, asset)
+                for run, asset in same_item
+                if run in windows and windows[run][0] <= op.start <= windows[run][1]
+            }
+        targets = {t for t in targets if t[0] in ours}
+        for run, asset in targets:
+            for cost in (result.assets[asset], result.runs[run]):
+                cost.fabric_capacity_unit_ms += op.capacity_unit_ms / len(targets)
+                if op.billed:
+                    cost.fabric_billed_capacity_unit_ms += op.capacity_unit_ms / len(targets)
+            result.assets[asset].runs.add(run)
+
     return Attribution(dict(result.assets), dict(result.runs), dict(result.unattributed))
 
 
 # ---- Reading Dagster
 
 
-def finished_runs(instance: dg.DagsterInstance, start: datetime, end: datetime) -> list[DagsterRun]:
+def finished_runs(instance: dg.DagsterInstance, start: datetime, end: datetime) -> list[RunRecord]:
     """Runs that finished in [start, end)."""
     records = instance.get_run_records(
         RunsFilter(statuses=_FINISHED, updated_after=start - timedelta(seconds=1))
     )
     return [
-        r.dagster_run
+        r
         for r in records
         if r.end_time is not None and start.timestamp() <= r.end_time < end.timestamp()
     ]
@@ -174,10 +243,10 @@ def run_location(run: DagsterRun) -> str | None:
 
 
 def materializations(
-    instance: dg.DagsterInstance, runs: Iterable[DagsterRun]
+    instance: dg.DagsterInstance, records: Iterable[RunRecord]
 ) -> list[Materialization]:
     found = []
-    for run in runs:
+    for run in (record.dagster_run for record in records):
         for entry in instance.all_logs(run.run_id, of_type=DagsterEventType.ASSET_MATERIALIZATION):
             event = entry.dagster_event
             m = event.event_specific_data.materialization if event else None  # type: ignore[union-attr]
@@ -190,6 +259,12 @@ def materializations(
                     step_key=entry.step_key or "",
                     dbt_node=_text(m.metadata.get("unique_id")),
                     databricks_run_id=_text(m.metadata.get(DATABRICKS_RUN_ID)),
+                    fabric_workspace_id=_text(m.metadata.get("fabric_workspace_id")),
+                    fabric_item_id=_text(m.metadata.get("fabric_item_id")),
+                    fabric_operation_id=next(
+                        (_text(m.metadata[k]) for k in FABRIC_OPERATION_KEYS if m.metadata.get(k)),
+                        None,
+                    ),
                 )
             )
     return found
@@ -274,6 +349,53 @@ def fetch_databricks_costs(
     }
 
 
+def fetch_fabric_operations(
+    query_uri: str, database: str, start: datetime, end: datetime, workspace_ids: Iterable[str]
+) -> list[FabricOperation]:
+    """Capacity operations of the given workspaces that started in [start - 1 day, end)."""
+    workspaces = sorted({w.lower() for w in workspace_ids})
+    if not workspaces:
+        return []
+    # The IDs go into the query, so only GUIDs (what Fabric uses) are accepted.
+    bad = [w for w in workspaces if not _GUID.match(w)]
+    if bad:
+        raise ValueError(f"not Fabric workspace IDs: {bad}")
+    from azure.kusto.data import KustoClient, KustoConnectionStringBuilder
+
+    from orchestrator_core.auth import credential
+
+    query = FABRIC_KQL.format(
+        start=_kql_time(start - timedelta(days=1)),
+        end=_kql_time(end),
+        workspaces=", ".join(f'"{w}"' for w in workspaces),
+    )
+    # The client asks the Eventhouse for its token audience; the identity needs read access.
+    builder = KustoConnectionStringBuilder.with_azure_token_credential(query_uri, credential())
+    with KustoClient(builder) as client:
+        table = client.execute_query(database, query).primary_results[0]
+        return [
+            FabricOperation(
+                operation_id=str(row["OperationId"] or ""),
+                workspace_id=str(row["WorkspaceId"] or ""),
+                item_id=str(row["ItemId"] or ""),
+                start=_epoch(row["OperationStartTime"]),
+                capacity_unit_ms=float(row["CapacityUnitMs"] or 0),
+                billed=str(row["ReleaseType"] or "") != "Preview",
+            )
+            for row in table
+        ]
+
+
+def _kql_time(moment: datetime) -> str:
+    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _epoch(value: Any) -> float:
+    if isinstance(value, datetime):
+        return value.timestamp()
+    return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+
+
 # ---- The job
 
 
@@ -287,20 +409,17 @@ def _day_bounds(partition_key: str) -> tuple[date, datetime, datetime]:
     return day, start, start + timedelta(days=1)
 
 
-def _credit_price() -> float | None:
-    raw = os.environ.get(CREDIT_PRICE_ENV)
-    return float(raw) if raw else None
-
-
 @dg.op
 def report_cost(context: dg.OpExecutionContext) -> None:
     day, start, end = _day_bounds(context.partition_key)
     instance = context.instance
-    runs = finished_runs(instance, start, end)
-    found = materializations(instance, runs)
+    records = finished_runs(instance, start, end)
+    found = materializations(instance, records)
+    windows = {r.dagster_run.run_id: (r.start_time or 0.0, r.end_time or 0.0) for r in records}
 
     snowflake_credits: dict[str, float] = {}
     databricks: dict[str, DatabricksCost] = {}
+    fabric: list[FabricOperation] = []
     # Built from the values here, not platform_resources(): its EnvVar fields only resolve when
     # Dagster initialises the resource, and this op reads whichever platforms are configured.
     if os.environ.get("SNOWFLAKE_ACCOUNT"):
@@ -317,35 +436,49 @@ def report_cost(context: dg.OpExecutionContext) -> None:
             os.environ[COST_WAREHOUSE_ENV],
             day,
         )
+    if os.environ.get(FABRIC_URI_ENV) and os.environ.get(FABRIC_DATABASE_ENV):
+        fabric = fetch_fabric_operations(
+            os.environ[FABRIC_URI_ENV],
+            os.environ[FABRIC_DATABASE_ENV],
+            start,
+            end,
+            {m.fabric_workspace_id for m in found if m.fabric_workspace_id},
+        )
 
-    result = attribute([r.run_id for r in runs], found, snowflake_credits, databricks)
-    price = _credit_price()
+    result = attribute(list(windows), found, snowflake_credits, databricks, fabric, windows)
+    prices = (_price(CREDIT_PRICE_ENV), _price(CU_HOUR_PRICE_ENV))
     for asset, cost in result.assets.items():
         metadata: dict[str, Any] = {
             "cost_date": day.isoformat(),
             "snowflake_credits": round(cost.snowflake_credits, 6),
             "databricks_dbus": round(cost.databricks_dbus, 6),
             "databricks_list_cost": round(cost.databricks_list_cost, 6),
+            "fabric_cu_seconds": round(cost.fabric_capacity_unit_ms / 1000, 3),
             "cost_runs": len(cost.runs),
         }
-        usd = cost.usd(price)
+        usd = cost.usd(*prices)
         if usd is not None:
             metadata["cost_usd"] = round(usd, 6)
         context.log_event(dg.AssetObservation(asset_key=asset, metadata=metadata))
 
-    by_id = {r.run_id: r for r in runs}
+    by_id = {r.dagster_run.run_id: r.dagster_run for r in records}
     rows = [
-        _row("asset", day, None, asset.to_user_string(), cost, price)
+        _row("asset", day, None, asset.to_user_string(), cost, prices)
         for asset, cost in result.assets.items()
     ] + [
-        _row("run", day, by_id[run_id], "", cost, price, result.unattributed.get(run_id))
+        _row("run", day, by_id[run_id], "", cost, prices, result.unattributed.get(run_id))
         for run_id, cost in result.runs.items()
     ]
     sent = log_ingestion.send(log_ingestion.COST_STREAM, rows)
     context.log.info(
-        f"{day}: {len(runs)} runs, {len(result.assets)} assets with cost, "
+        f"{day}: {len(records)} runs, {len(result.assets)} assets with cost, "
         f"{sent} rows to Log Analytics"
     )
+
+
+def _price(env: str) -> float | None:
+    raw = os.environ.get(env)
+    return float(raw) if raw else None
 
 
 def _row(
@@ -354,7 +487,7 @@ def _row(
     run: DagsterRun | None,
     asset: str,
     cost: Cost,
-    price: float | None,
+    prices: tuple[float | None, float | None],
     unattributed: Cost | None = None,
 ) -> dict[str, Any]:
     return {
@@ -368,7 +501,8 @@ def _row(
         "SnowflakeCredits": cost.snowflake_credits,
         "DatabricksDbus": cost.databricks_dbus,
         "DatabricksListCost": cost.databricks_list_cost,
-        "CostUsd": cost.usd(price),
+        "FabricCuSeconds": cost.fabric_capacity_unit_ms / 1000,
+        "CostUsd": cost.usd(*prices),
         "UnattributedSnowflakeCredits": unattributed.snowflake_credits if unattributed else 0.0,
     }
 

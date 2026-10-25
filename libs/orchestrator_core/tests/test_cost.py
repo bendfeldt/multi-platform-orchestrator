@@ -8,10 +8,12 @@ from typing import Any
 import dagster as dg
 import pytest
 from orchestrator_core import cost, insights, log_ingestion
-from orchestrator_core.cost import Cost, DatabricksCost, Materialization, attribute
+from orchestrator_core.cost import Cost, DatabricksCost, FabricOperation, Materialization, attribute
 from orchestrator_core.query_tag import parse_query_tag, query_tag
 
 MART = dg.AssetKey(["snowflake", "sales", "mart", "fct_orders"])
+LAKE = dg.AssetKey(["fabric", "sales", "lh_raw", "dbo", "orders"])
+WS, ITEM = "00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"
 SILVER = dg.AssetKey(["databricks", "sales", "silver", "orders"])
 A, B, C = dg.AssetKey("a"), dg.AssetKey("b"), dg.AssetKey("c")
 
@@ -60,11 +62,50 @@ def test_one_databricks_run_is_split_over_the_assets_it_wrote():
     assert result.runs["r1"].databricks_list_cost == pytest.approx(0.9)
 
 
+def _fabric_op(operation_id="op-1", start=150.0, cu_ms=7_200_000.0, billed=True, item=ITEM):
+    return FabricOperation(operation_id, WS.upper(), item, start, cu_ms, billed)
+
+
+def test_fabric_operation_goes_to_the_job_instance_that_ran_it():
+    mats = [Materialization(A, "r1", "s", fabric_workspace_id=WS, fabric_item_id=ITEM,
+                            fabric_operation_id="OP-1")]  # fmt: skip
+    result = attribute(["r1"], mats, {}, {}, [_fabric_op()], {"r1": (0.0, 10.0)})
+    assert result.assets[A].fabric_capacity_unit_ms == 7_200_000  # IDs match case-insensitively
+    assert result.assets[A].usd(None, cu_hour_price=0.25) == pytest.approx(0.5)  # 2 CU hours
+
+
+def test_fabric_falls_back_to_the_same_item_during_the_run():
+    mats = [Materialization(A, "r1", "s", fabric_workspace_id=WS, fabric_item_id=ITEM,
+                            fabric_operation_id="job-9")]  # fmt: skip
+    windows = {"r1": (100.0, 200.0)}
+    during = attribute(["r1"], mats, {}, {}, [_fabric_op("other", start=150.0)], windows)
+    after = attribute(["r1"], mats, {}, {}, [_fabric_op("other", start=250.0)], windows)
+    other_item = attribute(["r1"], mats, {}, {}, [_fabric_op("x", item="y")], windows)
+    assert during.assets[A].fabric_capacity_unit_ms == 7_200_000
+    assert A not in after.assets and A not in other_item.assets
+
+
+def test_preview_capacity_is_reported_but_not_priced():
+    mats = [Materialization(A, "r1", "s", fabric_operation_id="op-1")]
+    result = attribute(["r1"], mats, {}, {}, [_fabric_op(billed=False)], {})
+    cost = result.assets[A]
+    assert cost.fabric_capacity_unit_ms == 7_200_000 and cost.fabric_billed_capacity_unit_ms == 0
+    assert cost.usd(None, None) == 0.0
+
+
+def test_fabric_query_accepts_only_workspace_guids():
+    start = datetime(2026, 10, 23, tzinfo=UTC)
+    with pytest.raises(ValueError, match="not Fabric workspace IDs"):
+        cost.fetch_fabric_operations("https://x", "db", start, start, ['x") or true //'])
+    assert cost.fetch_fabric_operations("https://x", "db", start, start, []) == []
+
+
 def test_usd_needs_a_credit_price_and_usd_list_prices():
     assert Cost(snowflake_credits=2).usd(None) is None
     assert Cost(snowflake_credits=2, databricks_list_cost=1, currencies={"USD"}).usd(3.0) == 7.0
     assert Cost(databricks_list_cost=1, currencies={"EUR"}).usd(3.0) is None
     assert Cost().usd(None) == 0.0
+    assert Cost(fabric_billed_capacity_unit_ms=1).usd(None, None) is None
 
 
 def test_query_tags_round_trip_and_reject_foreign_tags():
@@ -98,7 +139,7 @@ def _example_assets():
     import example_sales
 
     defs = dg.load_from_defs_folder(path_within_project=Path(example_sales.__file__).parent)
-    wanted = {MART, SILVER}
+    wanted = {MART, SILVER, LAKE}
     return [a for a in defs.assets or [] if isinstance(a, dg.AssetsDefinition) and a.keys & wanted]
 
 
@@ -114,10 +155,14 @@ def test_cost_reaches_the_assets_through_the_tags_the_components_set(instance, m
         def run_job(self, job_id, job_parameters=None):
             return {"run_id": 4242, "run_page_url": "https://adb/run/4242"}
 
+    class _Fabric:
+        def run_item_job(self, workspace_id, item_id, job_type, execution_data=None):
+            return {"id": "fab-job-1", "status": "Completed"}
+
     result = dg.materialize(
         _example_assets(),
         instance=instance,
-        resources={"snowflake": _Snowflake(), "databricks": _Databricks()},
+        resources={"snowflake": _Snowflake(), "databricks": _Databricks(), "fabric": _Fabric()},
     )
     assert result.success
     [tag] = seen_tags
@@ -139,6 +184,15 @@ def test_cost_reaches_the_assets_through_the_tags_the_components_set(instance, m
         clients.append((databricks.host, warehouse_id))
         return {"4242": DatabricksCost(10.0, 2.5, "USD")}
 
+    monkeypatch.setenv("FABRIC_EVENTS_QUERY_URI", "https://eventhouse")
+    monkeypatch.setenv("FABRIC_EVENTS_DATABASE", "capacity")
+    monkeypatch.setenv("FABRIC_CU_HOUR_PRICE_USD", "0.25")
+
+    def fabric_operations(uri, database, start, end, workspaces):
+        clients.append((uri, database, sorted(workspaces)))
+        return [FabricOperation("FAB-JOB-1", WS, ITEM, 0.0, 3_600_000.0, True)]
+
+    monkeypatch.setattr(cost, "fetch_fabric_operations", fabric_operations)
     monkeypatch.setattr(cost, "fetch_snowflake_credits", snowflake_credits)
     monkeypatch.setattr(cost, "fetch_databricks_costs", databricks_costs)
     sent: list[tuple[str, list]] = []
@@ -163,18 +217,25 @@ def test_cost_reaches_the_assets_through_the_tags_the_components_set(instance, m
     assert latest.asset_observation and latest.asset_observation.metadata["cost_usd"].value == 2.0
 
     # Real settings, not EnvVar placeholders.
-    assert clients == [("acct", "OPS_WH", "MPO_MPO_OPS_DEV"), ("https://adb", "wh")]
+    assert clients == [
+        ("acct", "OPS_WH", "MPO_MPO_OPS_DEV"),
+        ("https://adb", "wh"),
+        ("https://eventhouse", "capacity", [WS]),  # only workspaces our runs used
+    ]
+    assert observed[LAKE]["fabric_cu_seconds"].value == 3600.0
+    assert observed[LAKE]["cost_usd"].value == 0.25  # 1 CU hour
     [(stream, rows)] = sent
     assert stream == log_ingestion.COST_STREAM
     run_row = next(r for r in rows if r["Scope"] == "run")
-    assert run_row["RunId"] == result.run_id and run_row["CostUsd"] == pytest.approx(4.5)
+    assert run_row["RunId"] == result.run_id and run_row["CostUsd"] == pytest.approx(4.75)
     assert set(run_row) == COST_COLUMNS
 
 
 # Must equal MpoCost_CL / MpoInsights_CL in the infra repo (environment/insights.tf).
 COST_COLUMNS = {
     "TimeGenerated", "Day", "Scope", "Location", "Job", "RunId", "Asset", "SnowflakeCredits",
-    "DatabricksDbus", "DatabricksListCost", "CostUsd", "UnattributedSnowflakeCredits",
+    "DatabricksDbus", "DatabricksListCost", "FabricCuSeconds", "CostUsd",
+    "UnattributedSnowflakeCredits",
 }  # fmt: skip
 INSIGHTS_COLUMNS = {
     "TimeGenerated", "Day", "Scope", "Location", "Job", "Asset", "Runs", "Succeeded", "Failed",
@@ -326,3 +387,44 @@ def test_snowflake_cost_query_reads_only_this_repos_tags():
     snowflake: Any = _Snowflake()
     assert cost.fetch_snowflake_credits(snowflake, start, end) == {'{"mpo_run":"r"}': 1.5}
     assert seen["prefix"] == '{"mpo_run":' and seen["start"] == datetime(2026, 10, 22, tzinfo=UTC)
+
+
+def test_fabric_query_reads_the_function_for_our_workspaces(monkeypatch):
+    import azure.kusto.data as kusto
+    from orchestrator_core import auth
+
+    seen = {}
+
+    class _Client:
+        def __init__(self, builder):
+            seen["builder"] = builder
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute_query(self, database, query):
+            seen.update(database=database, query=query)
+            row = {
+                "OperationId": "op-1",
+                "WorkspaceId": WS,
+                "ItemId": ITEM,
+                "OperationStartTime": datetime(2026, 10, 23, 1, 0, tzinfo=UTC),
+                "CapacityUnitMs": 1500.0,
+                "ReleaseType": "Preview",
+            }
+            return type("R", (), {"primary_results": [[row]]})()
+
+    monkeypatch.setattr(kusto, "KustoClient", _Client)
+    monkeypatch.setattr(auth, "credential", lambda: object())
+    start = datetime(2026, 10, 23, tzinfo=UTC)
+    [op] = cost.fetch_fabric_operations(
+        "https://eh.kusto.fabric.microsoft.com", "capacity", start, start, [WS.upper()]
+    )
+    assert op == FabricOperation("op-1", WS, ITEM, start.timestamp() + 3600, 1500.0, False)
+    assert seen["database"] == "capacity"
+    query = seen["query"]
+    assert query.lstrip().startswith("MpoCapacityOperations")
+    assert "datetime(2026-10-22T00:00:00Z)" in query and f'in ("{WS}")' in query

@@ -67,9 +67,23 @@ class Insights(BaseModel):
     rule_id: str
 
 
+class FabricCapacityEvents(BaseModel):
+    """The Eventhouse (made outside Terraform) holding Fabric capacity operation events."""
+
+    query_uri: str
+    database: str
+    # Your capacity's price per CU hour; None: Fabric cost is reported in CU seconds only.
+    cu_hour_price_usd: float | None = None
+
+
+class Fabric(BaseModel):
+    capacity_events: FabricCapacityEvents | None = None
+
+
 class Platforms(BaseModel):
     databricks: Databricks | None = None
     snowflake: Snowflake | None = None
+    fabric: Fabric | None = None
 
 
 class Contract(BaseModel):
