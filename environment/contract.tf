@@ -7,7 +7,7 @@ locals {
   } }
 
   contract = {
-    schema_version     = 1
+    schema_version     = 2 # 2: one webserver with Entra roles
     environment        = var.environment
     location           = var.location
     subscription_id    = var.subscription_id
@@ -26,13 +26,11 @@ locals {
       domains = { for name, domain in module.domain : name => domain.identity }
     })
     auth = {
-      tenant_id           = var.tenant_id
-      ui_app_client_id    = azuread_application.ui["full"].client_id
-      ui_ro_app_client_id = azuread_application.ui["readonly"].client_id
+      tenant_id        = var.tenant_id
+      ui_app_client_id = azuread_application.ui.client_id
     }
     ingress = {
-      full_hostname     = azurerm_cdn_frontdoor_endpoint.full.host_name
-      readonly_hostname = azurerm_cdn_frontdoor_endpoint.readonly.host_name
+      hostname = azurerm_cdn_frontdoor_endpoint.ui.host_name
     }
     platforms = {
       databricks = var.databricks_host == null ? null : { host = var.databricks_host }

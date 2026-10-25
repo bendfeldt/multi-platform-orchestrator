@@ -1,6 +1,12 @@
 # Domain example_sales in test. The file name must equal the code location's name in the
 # solution repo. Terraform creates the domain's identity and exactly these grants.
 # access: read | write. IDs are examples; they differ per environment.
+# launchers / editors: Entra groups with the domain's Dagster roles (Launcher: run and stop
+# jobs; Editor: also schedules, sensors, assets).
+launchers:
+  - 00000000-0000-0000-0000-0000000000d1
+editors:
+  - 00000000-0000-0000-0000-0000000000d2
 databricks:
   schemas:
     - name: sales_test.silver   # catalog.schema

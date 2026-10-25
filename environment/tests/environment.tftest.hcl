@@ -81,8 +81,8 @@ variables {
   app_deployer_principal_id  = "00000000-0000-0000-0000-00000000000a"
   contract_container_id      = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/st/blobServices/default/containers/contract-dev"
   image_policy_definition_id = "/subscriptions/s/providers/Microsoft.Authorization/policyDefinitions/mpo-images"
-  operators_group_id         = "00000000-0000-0000-0000-00000000000b"
-  viewers_group_id           = "00000000-0000-0000-0000-00000000000c"
+  admin_group_ids            = ["00000000-0000-0000-0000-00000000000b"]
+  viewer_group_ids           = ["00000000-0000-0000-0000-00000000000c"]
   databricks_host            = "https://adb-1.azuredatabricks.net"
   snowflake = {
     organization = "myorg"
@@ -159,16 +159,34 @@ run "control_plane_rights_stay_narrow" {
   }
 }
 
-run "viewers_cannot_sign_in_to_the_full_webserver" {
+run "roles_go_only_to_the_groups_named_for_them" {
   command = plan
 
   assert {
-    condition     = toset(keys(azuread_app_role_assignment.ui)) == toset(["full-operators", "readonly-operators", "readonly-viewers"])
-    error_message = "Only operators may be assigned to the full webserver."
+    condition = toset(keys(azuread_app_role_assignment.ui)) == toset([
+      "Dagster.Viewer/00000000-0000-0000-0000-00000000000c",
+      "Dagster.Admin/00000000-0000-0000-0000-00000000000b",
+      "Dagster.Launcher.example_sales/00000000-0000-0000-0000-0000000000d1",
+      "Dagster.Editor.example_sales/00000000-0000-0000-0000-0000000000d2",
+    ])
+    error_message = "Each group gets exactly the roles its variable or domain file names."
   }
   assert {
-    condition     = alltrue([for sp in azuread_service_principal.ui : sp.app_role_assignment_required])
-    error_message = "Both sign-in apps must require assignment."
+    condition     = toset([for r in azuread_application.ui.app_role : r.value]) == toset(["Dagster.Viewer", "Dagster.Admin", "Dagster.Launcher.example_sales", "Dagster.Editor.example_sales"])
+    error_message = "The sign-in app defines the four kinds of roles, per domain where scoped."
+  }
+  assert {
+    condition     = azuread_service_principal.ui.app_role_assignment_required
+    error_message = "Only assigned groups may sign in."
+  }
+}
+
+run "one_public_entry_point" {
+  command = plan
+
+  assert {
+    condition     = keys(azurerm_cdn_frontdoor_origin.this) == ["ui"] && azurerm_cdn_frontdoor_origin.this["ui"].host_name == "dagster-web.internal.example.westeurope.azurecontainerapps.io"
+    error_message = "Front Door must only reach the one webserver."
   }
 }
 
@@ -180,7 +198,7 @@ run "contract_lists_every_domain" {
     error_message = "Each domain file must appear in the contract."
   }
   assert {
-    condition     = local.contract.schema_version == 1 && local.contract.platforms.snowflake.account == "myorg-sales_dev"
+    condition     = local.contract.schema_version == 2 && local.contract.platforms.snowflake.account == "myorg-sales_dev"
     error_message = "Contract shape changed; bump schema_version in both repos."
   }
 }

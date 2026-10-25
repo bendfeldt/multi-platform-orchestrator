@@ -82,14 +82,14 @@ variable "acr_pull_principal_ids" {
   default     = {}
 }
 
-variable "operators_group_id" {
-  description = "Entra group allowed into the full webserver."
-  type        = string
+variable "viewer_group_ids" {
+  description = "Entra groups that may sign in and read everything (role Dagster.Viewer)."
+  type        = list(string)
 }
 
-variable "viewers_group_id" {
-  description = "Entra group allowed into the read-only webserver (operators are added too)."
-  type        = string
+variable "admin_group_ids" {
+  description = "Entra groups with every right in Dagster (role Dagster.Admin)."
+  type        = list(string)
 }
 
 variable "databricks_host" {

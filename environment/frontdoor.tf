@@ -1,27 +1,20 @@
-# This environment's part of the shared Front Door Premium profile: own endpoints, origins,
-# WAF policy and routes. Both origins reach the internal ACA environment over Private Link.
+# This environment's part of the shared Front Door Premium profile: its endpoint, origin,
+# WAF policy and route. The origin reaches the internal ACA environment over Private Link.
 
 locals {
   webservers = {
-    full     = "dagster-web"
-    readonly = "dagster-web-ro"
+    ui = "dagster-web" # one webserver; roles decide what each user may do
   }
 }
 
-resource "azurerm_cdn_frontdoor_endpoint" "full" {
+resource "azurerm_cdn_frontdoor_endpoint" "ui" {
   name                     = "${local.name}-${var.unique_suffix}"
-  cdn_frontdoor_profile_id = var.frontdoor_profile_id
-}
-
-resource "azurerm_cdn_frontdoor_endpoint" "readonly" {
-  name                     = "${local.name}-ro-${var.unique_suffix}"
   cdn_frontdoor_profile_id = var.frontdoor_profile_id
 }
 
 locals {
   endpoints = {
-    full     = azurerm_cdn_frontdoor_endpoint.full
-    readonly = azurerm_cdn_frontdoor_endpoint.readonly
+    ui = azurerm_cdn_frontdoor_endpoint.ui
   }
 }
 
@@ -106,10 +99,7 @@ resource "azurerm_cdn_frontdoor_security_policy" "this" {
       association {
         patterns_to_match = ["/*"]
         domain {
-          cdn_frontdoor_domain_id = azurerm_cdn_frontdoor_endpoint.full.id
-        }
-        domain {
-          cdn_frontdoor_domain_id = azurerm_cdn_frontdoor_endpoint.readonly.id
+          cdn_frontdoor_domain_id = azurerm_cdn_frontdoor_endpoint.ui.id
         }
       }
     }

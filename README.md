@@ -54,7 +54,12 @@ credential or a managed identity.
   including the grant tests in `modules/domain_access/tests`) and a Trivy scan. No cloud login.
 - Merging to `main` applies dev, then test and prod after approval.
 - **Add a domain**: add `domains/<env>/<name>.yaml` for each environment. Terraform creates
-  its identity and exactly the listed grants, and adds it to the contract.
+  its identity and exactly the listed grants, adds it to the contract, and creates the
+  domain's Dagster roles (`Dagster.Launcher.<name>`, `Dagster.Editor.<name>`) for the groups
+  in `launchers:` / `editors:`.
+- **Who may do what in Dagster**: groups in `viewer_group_ids` / `admin_group_ids`
+  (`envs/<env>.tfvars`) and the domain files. Group-to-role assignment needs Entra ID P1 or
+  P2.
 
 ## Not yet verified against Azure (Phase 0 spikes)
 

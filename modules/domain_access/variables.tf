@@ -22,6 +22,9 @@ variable "tenant_id" {
 variable "access" {
   description = "The domain's YAML file (domains/<env>/<name>.yaml): what it may read and write."
   type = object({
+    # Entra groups with the domain's Dagster roles (assigned in environment/entra.tf).
+    launchers = optional(list(string), [])
+    editors   = optional(list(string), [])
     databricks = optional(object({
       schemas = list(object({ name = string, access = string })) # name: catalog.schema
     }))
