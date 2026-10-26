@@ -37,6 +37,7 @@ done
 apply app dagster-daemon
 apply job dagster-cleanup
 apply job dagster-health
+if [ -f "$out/job-dagster-catalog.yaml" ]; then apply job dagster-catalog; fi
 
 # 3. The webserver. A new one starts reachable only inside the environment; Front Door can
 # reach it only after Entra sign-in is on (docs/PLAN.md §6.2; Spike E confirms the flags).

@@ -339,6 +339,21 @@ def render(
             workspace,
         ),
     }
+    if contract.catalog:
+        # Daily: the whole workspace's assets and lineage to Purview, as mpo_ops.
+        ops = ids.domains[OPS_LOCATION]
+        resources["job-dagster-catalog.yaml"] = _with_workspace(
+            _job(
+                contract,
+                ops,
+                platform_image,
+                ["python", "-m", "orchestrator_core.purview", "sync", WORKSPACE],
+                _common_env(contract, ops)
+                | {"PURVIEW_ENDPOINT": contract.catalog.purview_endpoint},
+                schedule="53 2 * * *",
+            ),
+            workspace,
+        )
     servers = [(location, location, f"{location}.definitions", {}) for location in CODE_LOCATIONS]
     servers += [
         # A preview: the pull request's image, as the domain (same identity and settings).

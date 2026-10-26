@@ -40,6 +40,7 @@
       }
     }
   },
+  "catalog": { "purview_endpoint": "https://contoso.purview.azure.com" },
   "insights": {
     "ingestion_endpoint": "https://dcr-mpo-dev-a1b2.westeurope-1.ingest.monitor.azure.com",
     "rule_id": "dcr-00000000000000000000000000000000"

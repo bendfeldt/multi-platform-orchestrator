@@ -1,6 +1,6 @@
 # Dagster+ Pro Features on Open-Source Dagster — Plan
 
-Status: **Phases A–G implemented and tested (role-based access, audit, alerts, cost and insights, Fabric cost, catalog, change reports and previews, uptime and security pack); phase H planned.**
+Status: **Phases A–H implemented and tested locally (role-based access, audit, alerts, cost and insights, Fabric cost, catalog, change reports and previews, uptime and security pack, Purview). What needs Azure or the platforms to confirm is listed in §10.**
 Builds on [PLAN.md](PLAN.md). Decisions in §11.
 
 How every statement here was checked:
@@ -280,6 +280,7 @@ No external party guarantees this; it is your SLA to run.
 | S8 | May the infra role (`MANAGE GRANTS`) grant `SNOWFLAKE.USAGE_VIEWER`? | Grant succeeds from Terraform; then `cost_access.sql` moves into Terraform |
 | S9 | The dbt query-tag macro on dbt-snowflake | Model queries show `mpo_dbt_node` in `QUERY_HISTORY` |
 | S10 | mpo_ops's managed identity queries the Eventhouse with workspace Viewer; the eventstream table matches `capacity_operations.kql` | The cost job reads operations; else adapt the function or grant |
+| S11 | Purview: which role may create the two type definitions, and Data Curator on a collection lets mpo_ops upsert entities | `typedefs` by an admin and a `sync` run succeed |
 
 ## 11. Delivery
 
@@ -426,6 +427,23 @@ redundancy only if chosen.
   tied to code or a test).
 - Zone redundancy stays optional (phase H decision): it needs two replicas of webserver and
   daemon and zone-redundant Postgres HA, which doubles Postgres cost.
+
+**Phase H, as built:**
+- `orchestrator_core.purview`: the Data Map REST API (Atlas v2, api-version 2023-09-01,
+  scope `https://purview.azure.net/.default`, base `<endpoint>/datamap/api` [S: the official
+  `azure-purview-datamap` package's source]). Custom types `dagster_asset` (a `DataSet`) and
+  `dagster_process` (a `Process` with `columnMapping`); an admin creates them once
+  (`typedefs`), the daily job only upserts entities. Assets first, then processes that refer
+  to them by qualified name; `columnMapping` in the documented DatasetMapping/ColumnMapping
+  form [D; that Purview renders it for custom types is S6].
+- The `dagster-catalog` Container Apps job (render.py, only when the contract has `catalog`)
+  runs as mpo_ops with the workspace file mounted, so it reads every code location's
+  definitions through their code servers.
+- Tests run the real example domain through a real workspace and check the payloads against a
+  mocked Purview.
+- Not done: linking `dagster://` assets to the entities Purview's own scanners create for the
+  same Snowflake, Databricks and Fabric tables (their qualified-name formats are not verified
+  here); zone redundancy (cost decision).
 
 ## 12. Sources
 

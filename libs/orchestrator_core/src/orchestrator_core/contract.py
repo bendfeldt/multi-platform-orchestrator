@@ -86,6 +86,12 @@ class Platforms(BaseModel):
     fabric: Fabric | None = None
 
 
+class Catalog(BaseModel):
+    """The tenant's existing Microsoft Purview account (orchestrator_core.purview)."""
+
+    purview_endpoint: str
+
+
 class Contract(BaseModel):
     # 2: one webserver with Entra roles (no read-only app or hostname).
     schema_version: Literal[2]
@@ -102,6 +108,7 @@ class Contract(BaseModel):
     ingress: Ingress
     platforms: Platforms
     insights: Insights | None = None
+    catalog: Catalog | None = None
 
 
 def load_contract(path: str | Path) -> Contract:

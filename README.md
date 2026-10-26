@@ -72,6 +72,11 @@ both to Log Analytics for the workbook. dbt projects on Snowflake set
 `query_tag: "{{ env_var('MPO_QUERY_TAG', '') }}"` in their profile and copy
 `libs/orchestrator_core/dbt_macros/mpo_query_tag.sql` into `macros/` for cost per model.
 
+Purview (optional): with the contract's `catalog.purview_endpoint`, the daily `dagster-catalog`
+job puts every asset, its columns and its lineage into the tenant's Purview account. Once, a
+Purview admin runs `PURVIEW_ENDPOINT=... uv run python -m orchestrator_core.purview typedefs`
+and gives mpo_ops's identity Data Curator on a collection.
+
 ## Add a domain
 
 1. Copy `code_locations/example_sales` to `code_locations/<domain>` and rename the package.

@@ -30,6 +30,7 @@ def test_every_container_runs_as_the_intended_identity():
         "job-dagster-migrate.yaml": ids.admin,
         "job-dagster-cleanup.yaml": ids.admin,
         "job-dagster-health.yaml": ids.admin,
+        "job-dagster-catalog.yaml": ids.domains["mpo_ops"],
     } | {f"app-{app_name(loc)}.yaml": ids.domains[loc] for loc in CODE_LOCATIONS}
 
     assert set(resources) == set(expected)
@@ -108,7 +109,9 @@ def test_workspace_lists_every_code_location_and_reaches_its_readers():
     entries = [e["grpc_server"] for e in yaml.safe_load(workspace_yaml())["load_from"]]
     assert sorted(e["location_name"] for e in entries) == CODE_LOCATIONS
     assert all(e["host"] == app_name(e["location_name"]) for e in entries)
-    for name in ("app-dagster-web.yaml", "app-dagster-daemon.yaml", "job-dagster-health.yaml"):
+    readers = ("app-dagster-web.yaml", "app-dagster-daemon.yaml", "job-dagster-health.yaml",
+               "job-dagster-catalog.yaml")  # fmt: skip
+    for name in readers:
         assert _mounted_workspace(resources[name]) == workspace_yaml(), name
 
 
@@ -170,3 +173,8 @@ def test_servers_have_probes():
     for location in CODE_LOCATIONS:
         server = probes(f"app-{app_name(location)}.yaml")
         assert server["Liveness"]["tcpSocket"] == {"port": 4000}
+
+
+def test_no_catalog_job_without_purview():
+    data = CONTRACT.model_dump() | {"catalog": None}
+    assert "job-dagster-catalog.yaml" not in render(type(CONTRACT).model_validate(data), IMAGES)

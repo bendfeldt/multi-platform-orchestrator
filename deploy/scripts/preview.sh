@@ -50,4 +50,5 @@ fi
 # The workspace file changed: the webserver, daemon and health job pick it up.
 apply app dagster-daemon
 apply job dagster-health
+if [ -f "$out/job-dagster-catalog.yaml" ]; then apply job dagster-catalog; fi
 apply app dagster-web
