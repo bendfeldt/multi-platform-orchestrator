@@ -48,6 +48,9 @@ locals {
         capacity_events = var.fabric_capacity_events
       }
     }
+    catalog = var.purview_endpoint == null || !local.ops_domain ? null : {
+      purview_endpoint = var.purview_endpoint
+    }
     insights = !local.ops_domain ? null : {
       ingestion_endpoint = azurerm_monitor_data_collection_rule.insights[0].logs_ingestion_endpoint
       rule_id            = azurerm_monitor_data_collection_rule.insights[0].immutable_id

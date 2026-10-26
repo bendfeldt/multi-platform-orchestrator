@@ -59,6 +59,10 @@ credential or a managed identity.
      that KQL database; set `fabric_capacity_events` (Query URI, database, price per CU hour)
      in `envs/<env>.tfvars`; uncomment the Viewer grant in `domains/<env>/mpo_ops.yaml`. The
      grant is on the whole workspace, so keep only the monitoring Eventhouse there.
+   - Purview (optional): set `purview_endpoint` (the tenant's existing account) in
+     `envs/<env>.tfvars`. In the Purview portal, a Purview admin gives mpo_ops's identity
+     Data Curator on a collection and runs the solution's `orchestrator_core.purview typedefs`
+     once.
 3. **Environment values**: copy the bootstrap outputs into `environment/envs/<env>.tfvars`
    (and the dev file's `acr_pull_principal_ids` with the test and prod app deployers).
 4. **CI**: environments `dev`, `test`, `prod` (GitHub) or `mpo-infra-<env>` (ADO) with approvals

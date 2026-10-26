@@ -415,3 +415,16 @@ run "no_fabric_cost_settings_without_an_eventhouse" {
     error_message = "Without fabric_capacity_events the contract has no Fabric cost settings."
   }
 }
+
+run "purview_reaches_the_contract_only_when_given" {
+  command = plan
+
+  variables {
+    purview_endpoint = "https://contoso.purview.azure.com"
+  }
+
+  assert {
+    condition     = local.contract.catalog.purview_endpoint == "https://contoso.purview.azure.com"
+    error_message = "The contract hands the catalog job the Purview account."
+  }
+}

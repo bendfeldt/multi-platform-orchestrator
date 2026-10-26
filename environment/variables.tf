@@ -133,3 +133,9 @@ variable "fabric_capacity_events" {
   })
   default = null
 }
+
+variable "purview_endpoint" {
+  description = "The tenant's existing Microsoft Purview account, e.g. https://<account>.purview.azure.com (not created here); null to skip the catalog sync."
+  type        = string
+  default     = null
+}
