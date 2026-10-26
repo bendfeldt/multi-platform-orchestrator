@@ -5,7 +5,7 @@ to Azure Container Apps with Entra ID everywhere and least-privilege identities.
 
 - Plan: [docs/PLAN.md](docs/PLAN.md) · Costs: [docs/COSTS.md](docs/COSTS.md) · Review: [docs/PLAN_REVIEW.md](docs/PLAN_REVIEW.md)
 - Operations: [docs/RUNBOOK.md](docs/RUNBOOK.md) · [docs/SLO.md](docs/SLO.md) · [docs/SECURITY.md](docs/SECURITY.md) · Pro features: [docs/PRO_FEATURES_PLAN.md](docs/PRO_FEATURES_PLAN.md)
-- Infrastructure (Terraform) lives in a separate repo, `multi-platform-orchestrator-infra`.
+- Infrastructure (Terraform) lives in a separate repo, `multi-platform-orchestrator-iac`.
 
 ## Layout
 
