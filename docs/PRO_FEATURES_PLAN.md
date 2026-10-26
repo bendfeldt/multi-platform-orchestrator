@@ -1,6 +1,6 @@
 # Dagster+ Pro Features on Open-Source Dagster — Plan
 
-Status: **Phases A–F implemented and tested (role-based access, audit, alerts, cost and insights, Fabric cost, catalog, change reports and previews); phases G–H planned.**
+Status: **Phases A–G implemented and tested (role-based access, audit, alerts, cost and insights, Fabric cost, catalog, change reports and previews, uptime and security pack); phase H planned.**
 Builds on [PLAN.md](PLAN.md). Decisions in §11.
 
 How every statement here was checked:
@@ -412,6 +412,20 @@ redundancy only if chosen.
 - Approving a preview runs that pull request's code, workflow files included, with dev's
   app-deployer rights; reviewers must read the diff first. Previews write to dev's tables like
   the dev domain does.
+
+**Phase G, as built:**
+- Probes on every server (render.py): startup allowance of 5 minutes, then liveness and
+  readiness; HTTP `/server_info` on the webserver (version info only, no database), TCP on the
+  gRPC code servers [D: probe fields; the automatic defaults are documented for the portal
+  only, so they are set explicitly].
+- Infra: one stateful alert per app on Container Apps errors (`ContainerAppSystemLogs_CL`,
+  `LogLevel_s == "Error"`): failed revisions, crash loops, probes. Not a `RestartCount` metric
+  alert, because multi-resource metric alerts for Container Apps are not documented [?].
+- docs/SLO.md (SLIs and Kusto queries, parsed), docs/RUNBOOK.md (alerts, point-in-time restore
+  copied back into the Terraform-managed server, roll back), docs/SECURITY.md (each statement
+  tied to code or a test).
+- Zone redundancy stays optional (phase H decision): it needs two replicas of webserver and
+  daemon and zone-redundant Postgres HA, which doubles Postgres cost.
 
 ## 12. Sources
 

@@ -54,6 +54,38 @@ def workspace_yaml(previews: tuple[Preview, ...] = ()) -> str:
     return yaml.safe_dump({"load_from": entries}, sort_keys=False)
 
 
+def _probes(port: int, http_path: str | None = None) -> list[dict[str, Any]]:
+    """Liveness (restart when stuck) and readiness, after a startup allowance of 5 minutes:
+    loading a code location or the workspace can take a while."""
+    check: dict[str, Any] = (
+        {"httpGet": {"path": http_path, "port": port}}
+        if http_path
+        else {"tcpSocket": {"port": port}}
+    )
+    return [
+        {
+            "type": "Startup",
+            "tcpSocket": {"port": port},
+            "periodSeconds": 5,
+            "failureThreshold": 60,
+        },
+        {
+            "type": "Liveness",
+            **check,
+            "periodSeconds": 30,
+            "failureThreshold": 3,
+            "timeoutSeconds": 5,
+        },
+        {
+            "type": "Readiness",
+            **check,
+            "periodSeconds": 10,
+            "failureThreshold": 3,
+            "timeoutSeconds": 5,
+        },
+    ]
+
+
 def _with_workspace(resource: dict[str, Any], workspace: str) -> dict[str, Any]:
     properties = resource["properties"]
     properties["configuration"]["secrets"] = [{"name": "workspace", "value": workspace}]
@@ -251,6 +283,8 @@ def render(
             ingress,
             min_replicas=0,
         )
+        # /server_info answers without touching the database or code servers.
+        app["properties"]["template"]["containers"][0]["probes"] = _probes(3000, "/server_info")
         return _with_workspace(app, workspace)
 
     resources = {
@@ -355,6 +389,7 @@ def render(
             cpu=0.25,
             memory="0.5Gi",
         )
+        app["properties"]["template"]["containers"][0]["probes"] = _probes(4000)  # gRPC: TCP
         if extra_env:  # how deploy scripts find running previews (deploy/scripts/lib.sh)
             app["tags"] = {PREVIEW_TAG: f"{location}:{extra_env['MPO_PREVIEW_PR']}"}
     return resources

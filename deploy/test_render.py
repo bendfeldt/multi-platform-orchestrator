@@ -155,3 +155,18 @@ def test_previews_only_in_dev():
     data = CONTRACT.model_dump() | {"environment": "test"}
     with pytest.raises(ValueError, match="dev only"):
         render(type(CONTRACT).model_validate(data), IMAGES, (Preview("example_sales", 1),))
+
+
+def test_servers_have_probes():
+    resources = render(CONTRACT, IMAGES)
+
+    def probes(name: str) -> dict:
+        container = resources[name]["properties"]["template"]["containers"][0]
+        return {p["type"]: p for p in container["probes"]}
+
+    web = probes("app-dagster-web.yaml")
+    assert web["Liveness"]["httpGet"] == {"path": "/server_info", "port": 3000}
+    assert set(web) == {"Startup", "Liveness", "Readiness"}
+    for location in CODE_LOCATIONS:
+        server = probes(f"app-{app_name(location)}.yaml")
+        assert server["Liveness"]["tcpSocket"] == {"port": 4000}
