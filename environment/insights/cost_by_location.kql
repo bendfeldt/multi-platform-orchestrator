@@ -1,4 +1,5 @@
 MpoCost_CL
+| summarize arg_max(TimeGenerated, *) by Day, Scope, Asset, RunId // a re-run day counts once
 | where Scope == "run"
 | summarize CostUsd = sum(CostUsd), Unattributed = sum(UnattributedSnowflakeCredits) by Day = bin(Day, 1d), Location
 | order by Day asc

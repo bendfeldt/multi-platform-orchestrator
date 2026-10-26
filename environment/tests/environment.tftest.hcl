@@ -280,6 +280,10 @@ run "every_receiver_type_and_route" {
     error_message = "Routes filter by their locations and kinds, and only when given."
   }
   assert {
+    condition     = alltrue([for r in azurerm_monitor_scheduled_query_rules_alert_v2.route : r.mute_actions_after_alert_duration == "PT1H" && r.auto_mitigation_enabled == null])
+    error_message = "A lasting problem notifies once an hour, not every 5 minutes."
+  }
+  assert {
     condition     = toset(azurerm_monitor_scheduled_query_rules_alert_v2.route["1-error"].action[0].action_groups) == toset([azurerm_monitor_action_group.this["sales"].id])
     error_message = "A route notifies only its own groups."
   }

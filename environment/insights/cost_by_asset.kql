@@ -1,4 +1,5 @@
 MpoCost_CL
+| summarize arg_max(TimeGenerated, *) by Day, Scope, Asset, RunId // a re-run day counts once
 | where Scope == "asset"
 | summarize CostUsd = sum(CostUsd), SnowflakeCredits = sum(SnowflakeCredits), DatabricksDbus = sum(DatabricksDbus) by Asset
 | order by CostUsd desc

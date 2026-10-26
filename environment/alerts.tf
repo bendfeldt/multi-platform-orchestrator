@@ -208,9 +208,11 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "route" {
   severity            = local.alert_severities[each.value.severity]
   # Azure Monitor re-evaluates when logs arrive late, so equal window and frequency neither
   # miss nor repeat lines.
-  evaluation_frequency    = "PT5M"
-  window_duration         = "PT5M"
-  auto_mitigation_enabled = false # every new failure notifies
+  evaluation_frequency = "PT5M"
+  window_duration      = "PT5M"
+  # One notification per kind, code location and job/asset per hour: a lasting problem (a
+  # broken code location) would otherwise notify every 5 minutes. Other problems still notify.
+  mute_actions_after_alert_duration = "PT1H"
   # The table only exists once the first container has logged.
   skip_query_validation = true
 

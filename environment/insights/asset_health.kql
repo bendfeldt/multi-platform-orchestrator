@@ -1,4 +1,5 @@
 MpoInsights_CL
+| summarize arg_max(TimeGenerated, *) by Day, Scope, Location, Job, Asset // a re-run day counts once
 | where Scope == "asset"
 | summarize Materializations = sum(Materializations), ChecksFailed = sum(ChecksFailed), FreshnessFailures = sum(FreshnessFailures) by Asset
 | order by ChecksFailed desc, FreshnessFailures desc
