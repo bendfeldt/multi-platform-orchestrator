@@ -1,0 +1,64 @@
+name: preview
+
+# A pull request's changed code locations, deployed to dev as <location>_pr<N> with no
+# automation and new asset keys (docs/PRO_FEATURES_PLAN.md §7.2). Runs only for pull requests
+# labelled "preview", from this repository, after a reviewer approves the environment
+# "preview". Approving runs this pull request's code, workflow files included, with dev's
+# app-deployer rights: review the diff first.
+# Environment "preview": required reviewers; variables as dev (AZURE_CLIENT_ID, AZURE_TENANT_ID,
+# AZURE_SUBSCRIPTION_ID, ACR_LOGIN_SERVER, CONTRACT_URL); federated credential subject
+# repo:<org>/<repo>:environment:preview (infra repo, bootstrap).
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dev-workspace # one change to dev's workspace file at a time (deploy.yml uses it too)
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    if: >-
+      contains(github.event.pull_request.labels.*.name, 'preview') &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    environment: preview
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.11.32"
+      - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - env:
+          PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
+          CONTRACT_URL: ${{ vars.CONTRACT_URL }}
+        run: |
+          set -euo pipefail
+          mapfile -t locations < <(deploy/scripts/changed-locations.sh "$BASE")
+          if [ "${#locations[@]}" -eq 0 ]; then
+            echo "No domain code location changed; nothing to preview." >>"$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          tag="pr$PR-$GITHUB_SHA"
+          deploy/scripts/build.sh "$tag"
+          deploy/scripts/push.sh "$ACR_LOGIN_SERVER" "$tag" images.json
+          for location in "${locations[@]}"; do
+            deploy/scripts/preview.sh deploy "$location" "$PR" images.json
+            echo "Preview: code location \`${location}_pr$PR\` in dev." >>"$GITHUB_STEP_SUMMARY"
+          done

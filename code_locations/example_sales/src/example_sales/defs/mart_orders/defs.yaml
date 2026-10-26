@@ -11,3 +11,18 @@ attributes:
     - databricks/sales/silver/orders
   writes:
     - snowflake/sales/mart/fct_orders
+  # Catalog: who owns it, how to find it, and its columns with their upstream columns.
+  owners:
+    - team:sales-data
+  tags:
+    layer: mart
+    pii: "false"
+  columns:
+    snowflake/sales/mart/fct_orders:
+      - name: order_id
+        type: number
+        description: One row per order.
+        derived_from: ["databricks/sales/silver/orders:order_id"]
+      - name: amount
+        type: number(12,2)
+        derived_from: ["databricks/sales/silver/orders:amount"]

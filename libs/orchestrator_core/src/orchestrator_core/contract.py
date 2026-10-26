@@ -36,16 +36,16 @@ class ComputeLogs(BaseModel):
 class Auth(BaseModel):
     tenant_id: str
     ui_app_client_id: str
-    ui_ro_app_client_id: str
 
 
 class Ingress(BaseModel):
-    full_hostname: str
-    readonly_hostname: str
+    hostname: str
 
 
 class Databricks(BaseModel):
     host: str
+    # mpo_ops's SQL warehouse for the billing system tables (cost.py); None: no Databricks cost.
+    cost_warehouse_id: str | None = None
 
 
 class SnowflakeDomain(BaseModel):
@@ -56,15 +56,45 @@ class SnowflakeDomain(BaseModel):
 class Snowflake(BaseModel):
     account: str
     domains: dict[str, SnowflakeDomain]
+    # Your contract's price per credit; None: cost is reported in credits only.
+    credit_price_usd: float | None = None
+
+
+class Insights(BaseModel):
+    """The data collection rule mpo_ops sends cost and insight rows to (log_ingestion.py)."""
+
+    ingestion_endpoint: str
+    rule_id: str
+
+
+class FabricCapacityEvents(BaseModel):
+    """The Eventhouse (made outside Terraform) holding Fabric capacity operation events."""
+
+    query_uri: str
+    database: str
+    # Your capacity's price per CU hour; None: Fabric cost is reported in CU seconds only.
+    cu_hour_price_usd: float | None = None
+
+
+class Fabric(BaseModel):
+    capacity_events: FabricCapacityEvents | None = None
 
 
 class Platforms(BaseModel):
     databricks: Databricks | None = None
     snowflake: Snowflake | None = None
+    fabric: Fabric | None = None
+
+
+class Catalog(BaseModel):
+    """The tenant's existing Microsoft Purview account (orchestrator_core.purview)."""
+
+    purview_endpoint: str
 
 
 class Contract(BaseModel):
-    schema_version: Literal[1]
+    # 2: one webserver with Entra roles (no read-only app or hostname).
+    schema_version: Literal[2]
     environment: Literal["dev", "test", "prod"]
     location: str
     subscription_id: str
@@ -77,6 +107,8 @@ class Contract(BaseModel):
     auth: Auth
     ingress: Ingress
     platforms: Platforms
+    insights: Insights | None = None
+    catalog: Catalog | None = None
 
 
 def load_contract(path: str | Path) -> Contract:

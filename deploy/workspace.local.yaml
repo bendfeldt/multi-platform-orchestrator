@@ -3,3 +3,7 @@ load_from:
       host: code-example-sales
       port: 4000
       location_name: example_sales
+  - grpc_server:
+      host: code-mpo-ops
+      port: 4000
+      location_name: mpo_ops

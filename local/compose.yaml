@@ -42,6 +42,16 @@ services:
     image: localhost/mpo-example-sales:local
     command: dagster code-server start -h 0.0.0.0 -p 4000 -m example_sales.definitions
 
+  code-mpo-ops:
+    <<: *dagster
+    build:
+      context: ..
+      dockerfile: containers/Containerfile
+      args:
+        SYNC_ARGS: --package mpo-ops
+    image: localhost/mpo-mpo-ops:local
+    command: dagster code-server start -h 0.0.0.0 -p 4000 -m mpo_ops.definitions
+
   webserver:
     <<: *dagster
     build: *platform-build

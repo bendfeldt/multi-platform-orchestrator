@@ -1,7 +1,0 @@
-# One entry per code location; container app "cl-<name>" from deploy/render.py.
-# deploy/test_render.py checks this list matches code_locations/.
-load_from:
-  - grpc_server:
-      host: cl-example-sales
-      port: 80
-      location_name: example_sales

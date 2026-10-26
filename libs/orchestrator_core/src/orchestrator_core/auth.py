@@ -17,6 +17,11 @@ def _credential() -> TokenCredential:
     return AzureCliCredential()
 
 
+def credential() -> TokenCredential:
+    """The process's Entra credential, for Azure SDK clients."""
+    return _credential()
+
+
 def get_token(scope: str) -> str:
     """A short-lived Entra token; azure-identity caches and refreshes it."""
     return _credential().get_token(scope).token

@@ -50,7 +50,7 @@ def test_contract_fixture_loads():
 
 
 def test_contract_rejects_unknown_schema_version(tmp_path):
-    data = json.loads(FIXTURE.read_text()) | {"schema_version": 2}
+    data = json.loads(FIXTURE.read_text()) | {"schema_version": 3}
     path = tmp_path / "contract.json"
     path.write_text(json.dumps(data))
     with pytest.raises(ValidationError):

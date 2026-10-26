@@ -14,6 +14,10 @@ dependencies = [
     "snowflake-connector-python>=3.17",
     "requests>=2.32",
     "dagster-azure[container-apps]==0.29.26",
+    # Cost and insight rows to Log Analytics (mpo_ops).
+    "azure-monitor-ingestion>=1.1,<2",
+    # Fabric capacity events in an Eventhouse (mpo_ops, cost.py).
+    "azure-kusto-data>=6,<7",
 ]
 
 [project.optional-dependencies]
@@ -21,6 +25,10 @@ dependencies = [
 webserver = ["dagster-webserver==1.13.26"]
 dbt = [
     "dagster-dbt==0.29.26",
+]
+# Power BI reports and dashboards in the catalog (orchestrator_core.powerbi).
+powerbi = [
+    "dagster-powerbi==0.29.26",
 ]
 
 [build-system]

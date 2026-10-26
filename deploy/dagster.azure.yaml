@@ -38,6 +38,11 @@ run_launcher:
       cpu: "0.5"
       memory: 1Gi
 
+# Queues runs like the default coordinator and tags UI-launched runs with the signed-in user.
+run_coordinator:
+  module: orchestrator_core.run_coordinator
+  class: AuditedRunCoordinator
+
 concurrency:
   runs:
     # Not settable per environment; 10 stays well inside Postgres B1ms's ~50 connections.

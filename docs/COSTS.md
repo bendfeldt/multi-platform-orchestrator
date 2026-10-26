@@ -89,6 +89,23 @@ Shared Front Door Premium profile: $330 base + ≈ $6 requests + ≈ $2 transfer
 
 **All three environments incl. Front Door: ≈ $660–680 / month.**
 
+### Pro features (docs/PRO_FEATURES_PLAN.md), per environment
+
+From the unit prices in §1 (Container Apps jobs at 0.5 vCPU and 1 GiB); run times are
+assumptions, check them in the first month.
+
+| Item | Cost | Assumption |
+|---|---|---|
+| Health job, every 5 minutes | ≈ $2.60 / month | 8,640 runs × 20 s |
+| Daily jobs: `mpo_cost`, `mpo_insights`, `dagster-catalog` | ≈ $0.15 / month each | 5 min a day each |
+| Log Analytics: alert, audit, cost and insight rows | inside the Log Analytics row above | a few thousand rows a day, well under 1 GB / month |
+| Databricks cost warehouse (2X-Small serverless, stops after 10 min idle) | DBUs on your Databricks bill | runs about 10–15 minutes a day; reuse an existing warehouse (`databricks_cost_warehouse_id`) to avoid it |
+| Fabric Eventstream + Eventhouse (only with `fabric_capacity_events`) | capacity units on your Fabric capacity, while they run | measure in the Fabric Capacity Metrics app after a week |
+| Purview (only with `purview_endpoint`) | on your Purview bill | one entity per asset plus one per lineage process |
+
+The Azure-side additions come to about **$3 a month per environment**; the platform-side ones
+depend on your contracts.
+
 ### Variants
 
 | Variant | Change | All envs / month |

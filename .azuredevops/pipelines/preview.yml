@@ -1,0 +1,61 @@
+# Manual: deploys or removes a pull request's preview in dev (docs/PRO_FEATURES_PLAN.md §7.2),
+# like .github/workflows/preview.yml. Needs the ADO environment mpo-preview with approvals
+# (approving runs the pull request's code with dev's app-deployer rights), the service
+# connection mpo-app-dev and the variable group mpo-dev. Remove previews of closed pull
+# requests with action "remove".
+trigger: none
+pr: none
+
+parameters:
+  - name: pullRequest
+    type: number
+  - name: action
+    type: string
+    default: deploy
+    values: [deploy, remove]
+
+pool:
+  vmImage: ubuntu-24.04
+
+variables:
+  - group: mpo-dev
+
+jobs:
+  - deployment: preview
+    environment: mpo-preview
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - checkout: self
+              fetchDepth: 0
+              persistCredentials: true # to fetch the pull request's head below
+            - template: install-uv.yml
+            - task: AzureCLI@2
+              inputs:
+                azureSubscription: mpo-app-dev
+                scriptType: bash
+                scriptLocation: inlineScript
+                inlineScript: |
+                  set -euo pipefail
+                  git fetch origin "pull/$PR/head:pr-$PR"
+                  base="$(git merge-base origin/main "pr-$PR")"
+                  git checkout --quiet "pr-$PR"
+                  mapfile -t locations < <(deploy/scripts/changed-locations.sh "$base")
+                  if [ "$ACTION" = deploy ] && [ "${#locations[@]}" -gt 0 ]; then
+                    tag="pr$PR-$(git rev-parse HEAD)"
+                    deploy/scripts/build.sh "$tag"
+                    deploy/scripts/push.sh "$ACR_LOGIN_SERVER" "$tag" images.json
+                  fi
+                  for location in "${locations[@]}"; do
+                    if [ "$ACTION" = deploy ]; then
+                      deploy/scripts/preview.sh deploy "$location" "$PR" images.json
+                    else
+                      deploy/scripts/preview.sh remove "$location" "$PR"
+                    fi
+                  done
+              env:
+                PR: ${{ parameters.pullRequest }}
+                ACTION: ${{ parameters.action }}
+                ACR_LOGIN_SERVER: $(ACR_LOGIN_SERVER)
+                CONTRACT_URL: $(CONTRACT_URL)

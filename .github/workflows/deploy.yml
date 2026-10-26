@@ -26,6 +26,9 @@ jobs:
     needs: ci
     runs-on: ubuntu-24.04
     environment: dev
+    concurrency:
+      group: dev-workspace # previews change dev's workspace file too
+      cancel-in-progress: false
     permissions:
       contents: read
       id-token: write

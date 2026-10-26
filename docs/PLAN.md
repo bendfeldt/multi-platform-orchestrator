@@ -143,7 +143,7 @@ via RBAC by the app deployer):
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "environment": "dev",
   "location": "westeurope",
   "subscription_id": "…",
@@ -158,14 +158,17 @@ via RBAC by the app deployer):
     "admin": { "resource_id": "…", "client_id": "…", "principal_name": "…" },
     "domains": { "sales": { "resource_id": "…", "client_id": "…", "principal_name": "…" } }
   },
-  "auth": { "tenant_id": "…", "ui_app_client_id": "…", "ui_ro_app_client_id": "…" },
-  "ingress": { "full_hostname": "…", "readonly_hostname": "…" },
+  "auth": { "tenant_id": "…", "ui_app_client_id": "…" },
+  "ingress": { "hostname": "…" },
   "platforms": {
     "databricks": { "host": "…" },
     "snowflake": { "account": "…", "domains": { "sales": { "role": "…", "warehouse": "…" } } }
   }
 }
 ```
+
+Optional fields (cost reports, workbook, Purview: docs/PRO_FEATURES_PLAN.md) are left out here;
+`contract.py` lists them all.
 
 - The schema is the pydantic model in `orchestrator_core/contract.py` in the **solution** repo,
   which validates the contract when it reads it. The infra repo only publishes outputs and has no dependency on the solution repo.
@@ -265,7 +268,8 @@ Dev/test identities never have prod access.
 - **Domain separation does not cover people.** In open-source Dagster any Operator can launch
   any domain's job, which then runs with that domain's identity. If people must be separated per
   domain, the options are Dagster+ (role-based access) or one deployment per domain. No custom
-  access layer is built.
+  access layer is built. *Update:* open-source Dagster turned out to support per-code-location
+  permissions through its request context; see [PRO_FEATURES_PLAN.md](PRO_FEATURES_PLAN.md) §2.
 
 ### 5.3 Subscription layout (both supported)
 
@@ -325,10 +329,10 @@ built-in authentication (Easy Auth) with Entra ID.
   origin unhealthy, and would keep the webservers from scaling to zero.
 - Private Link connection approved by Terraform (cross-subscription when environments are in
   separate subscriptions).
-- **Two Entra app registrations per environment**: `mpo-ui-<env>` (full webserver) and
-  `mpo-ui-ro-<env>` (read-only). User assignment required: only `Dagster-Operators` on the full
-  app; `Dagster-Viewers` + `Dagster-Operators` on the read-only app. A viewer cannot sign in to
-  the full webserver.
+- **One Entra app registration per environment** (`mpo-ui-<env>`) with app roles
+  `Dagster.Viewer`, `Dagster.Admin`, `Dagster.Launcher.<domain>`, `Dagster.Editor.<domain>`;
+  user assignment required. One webserver enforces the roles per code location
+  ([PRO_FEATURES_PLAN.md](PRO_FEATURES_PLAN.md) §2).
 - **Conditional Access**: MFA, compliant device, block risky sign-ins.
 - HTTPS only, managed certificates on Front Door, Easy Auth configured for the forwarded host
   (`X-Forwarded-Host`) so redirects use the Front Door domain.

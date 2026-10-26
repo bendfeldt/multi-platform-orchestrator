@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "environment": "dev",
   "location": "westeurope",
   "subscription_id": "00000000-0000-0000-0000-000000000000",
@@ -13,20 +13,36 @@
     "webserver": { "resource_id": "/subscriptions/0/resourceGroups/rg-mpo-dev/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-dagster-web-dev", "client_id": "22222222-2222-2222-2222-222222222222", "principal_name": "id-dagster-web-dev" },
     "admin": { "resource_id": "/subscriptions/0/resourceGroups/rg-mpo-dev/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-dagster-admin-dev", "client_id": "33333333-3333-3333-3333-333333333333", "principal_name": "id-dagster-admin-dev" },
     "domains": {
-      "example_sales": { "resource_id": "/subscriptions/0/resourceGroups/rg-mpo-dev/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-cl-sales-dev", "client_id": "44444444-4444-4444-4444-444444444444", "principal_name": "id-cl-sales-dev" }
+      "example_sales": { "resource_id": "/subscriptions/0/resourceGroups/rg-mpo-dev/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-cl-sales-dev", "client_id": "44444444-4444-4444-4444-444444444444", "principal_name": "id-cl-sales-dev" },
+      "mpo_ops": { "resource_id": "/subscriptions/0/resourceGroups/rg-mpo-dev/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-cl-mpo-ops-dev", "client_id": "88888888-8888-8888-8888-888888888888", "principal_name": "id-cl-mpo-ops-dev" }
     }
   },
   "auth": {
     "tenant_id": "55555555-5555-5555-5555-555555555555",
-    "ui_app_client_id": "66666666-6666-6666-6666-666666666666",
-    "ui_ro_app_client_id": "77777777-7777-7777-7777-777777777777"
+    "ui_app_client_id": "66666666-6666-6666-6666-666666666666"
   },
-  "ingress": { "full_hostname": "dagster-dev.example.com", "readonly_hostname": "dagster-ro-dev.example.com" },
+  "ingress": { "hostname": "dagster-dev.example.com" },
   "platforms": {
-    "databricks": { "host": "https://adb-0000000000000000.0.azuredatabricks.net" },
+    "databricks": { "host": "https://adb-0000000000000000.0.azuredatabricks.net", "cost_warehouse_id": "abc123costwh" },
     "snowflake": {
       "account": "myorg-sales-dev",
-      "domains": { "example_sales": { "role": "SALES_RW", "warehouse": "SALES_WH" } }
+      "domains": {
+        "example_sales": { "role": "SALES_RW", "warehouse": "SALES_WH" },
+        "mpo_ops": { "role": "MPO_MPO_OPS_DEV", "warehouse": "OPS_WH" }
+      },
+      "credit_price_usd": 4.0
+    },
+    "fabric": {
+      "capacity_events": {
+        "query_uri": "https://trd-00000000000000000000.z0.kusto.fabric.microsoft.com",
+        "database": "capacity_monitoring",
+        "cu_hour_price_usd": 0.2
+      }
     }
+  },
+  "catalog": { "purview_endpoint": "https://contoso.purview.azure.com" },
+  "insights": {
+    "ingestion_endpoint": "https://dcr-mpo-dev-a1b2.westeurope-1.ingest.monitor.azure.com",
+    "rule_id": "dcr-00000000000000000000000000000000"
   }
 }

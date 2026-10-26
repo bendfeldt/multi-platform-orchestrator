@@ -13,7 +13,8 @@ pr: none
 parameters:
   - name: serviceConnections
     type: object
-    default: { dev: mpo-dev, test: mpo-test, prod: mpo-prod }
+    # Named like the app deployer whose federated credential trusts them (infra repo, bootstrap).
+    default: { dev: mpo-app-dev, test: mpo-app-test, prod: mpo-app-prod }
 
 pool:
   vmImage: ubuntu-24.04

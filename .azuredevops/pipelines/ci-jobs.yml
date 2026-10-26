@@ -14,3 +14,20 @@ jobs:
         persistCredentials: false
       - script: deploy/scripts/build.sh ci
         displayName: Build images
+
+  # What the pull request changes in the Dagster definitions, as the run's summary tab.
+  - job: change_report
+    condition: eq(variables['Build.Reason'], 'PullRequest')
+    steps:
+      - checkout: self
+        persistCredentials: false
+        fetchDepth: 0 # includes the target branch
+      - template: install-uv.yml
+      - script: |
+          set -euo pipefail
+          git worktree add --detach .base "origin/${TARGET#refs/heads/}"
+          deploy/scripts/change-report.sh .base change-report.md
+          echo "##vso[task.uploadsummary]$PWD/change-report.md"
+        displayName: Change report
+        env:
+          TARGET: $(System.PullRequest.TargetBranch)
