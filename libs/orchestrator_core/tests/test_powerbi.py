@@ -68,3 +68,13 @@ def test_semantic_models_only_when_asked(power_bi):
     with dg.instance_for_test() as instance:
         specs = _load("  include_semantic_models: true\n", instance)
     assert MODEL in specs and list(specs[MODEL].deps) == []
+
+
+def test_a_power_bi_outage_does_not_stop_the_code_location(monkeypatch):
+    monkeypatch.setattr(powerbi, "get_token", lambda scope: "token")
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as mock:
+        mock.get(f"{API}/dashboards", status=503)
+        mock.get(f"{API}/reports", status=503)
+        mock.get(f"{API}/datasets", status=503)
+        with dg.instance_for_test() as instance:
+            assert _load("", instance) == {}  # loads, without reports

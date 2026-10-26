@@ -167,6 +167,30 @@ def test_ui_launch_is_tagged_with_the_user_and_audited(client, capsys):
     ]
 
 
+def test_every_request_form_that_runs_a_mutation_is_audited(client, capsys):
+    """Dagster also runs GraphQL sent as GET, as raw text and in the query string."""
+    client, _ = client
+    headers = principal("Dagster.Launcher.example_sales")
+    query = launch("example_sales")
+    responses = [
+        client.post("/graphql", json={"query": query}, headers=headers),
+        client.post("/graphql", content=query,
+                    headers=headers | {"content-type": "application/graphql"}),
+        client.get("/graphql", params={"query": query}, headers=headers),
+        client.post("/graphql", params={"query": query}, headers=headers),
+    ]  # fmt: skip
+    assert [r.json()["data"]["launchRun"]["__typename"] for r in responses] == (
+        ["LaunchRunSuccess"] * 4
+    )
+    records = [
+        json.loads(line)
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith('{"mpo_audit"')
+    ]
+    assert [r["mutations"] for r in records] == [["launchRun"]] * 4
+    assert {r["user"] for r in records} == {"anna@contoso.com"}
+
+
 @pytest.mark.parametrize(
     "header",
     [

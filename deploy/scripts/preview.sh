@@ -21,6 +21,11 @@ rg="$(jq -r .resource_group build/contract.json)"
 # shellcheck source=deploy/scripts/lib.sh
 source deploy/scripts/lib.sh
 
+# The first webserver must come from deploy.sh, which keeps it internal until sign-in is on.
+if ! az containerapp show --name dagster-web --resource-group "$rg" --only-show-errors >/dev/null 2>&1; then
+  echo "dev has no webserver yet: deploy main to dev first" >&2
+  exit 1
+fi
 others="$(previews | tr , '\n' | grep -vx "$location:$pr" | paste -sd, - || true)"
 running_images >build/images.json
 case "$action" in

@@ -16,6 +16,8 @@ Uses the workspace APIs, not the admin scan, so the identity only needs to be a 
 import re
 
 import dagster as dg
+import requests
+from azure.core.exceptions import AzureError
 from dagster_powerbi import DagsterPowerBITranslator, PowerBIWorkspace, load_powerbi_asset_specs
 from dagster_powerbi.resource import PowerBICredentials
 from dagster_powerbi.translator import PowerBITranslatorData
@@ -86,9 +88,18 @@ class PowerBIReports(dg.Component, dg.Model, dg.Resolvable):
         kinds = {"report", "dashboard"} | (
             {"semantic_model"} if self.include_semantic_models else set()
         )
+        try:
+            loaded = load_powerbi_asset_specs(workspace, translator, use_workspace_scan=False)
+        except (requests.RequestException, AzureError) as error:
+            # The catalog entries can wait; the domain's jobs must still load.
+            dg.get_dagster_logger().warning(
+                f"Power BI workspace {self.workspace_id} not loaded, its reports are missing "
+                f"until the next load: {error}"
+            )
+            return dg.Definitions()
         specs = [
             spec.replace_attributes(group_name=self.group_name) if self.group_name else spec
-            for spec in load_powerbi_asset_specs(workspace, translator, use_workspace_scan=False)
+            for spec in loaded
             if spec.key.path[2] in kinds
         ]
         return dg.Definitions(assets=specs)

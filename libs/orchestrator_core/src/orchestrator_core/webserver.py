@@ -7,16 +7,18 @@ and middleware. Locally, the plain `dagster-webserver` still runs (no sign-in th
 """
 
 import argparse
+from typing import Any
 
 import uvicorn
 from dagster import DagsterInstance
 from dagster._core.workspace.load_target import WorkspaceFileTarget
 from dagster_webserver.version import __version__
 from dagster_webserver.webserver import DagsterWebserver
-from starlette.middleware import Middleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from orchestrator_core.access import EntraWorkspaceProcessContext
-from orchestrator_core.audit import GraphQLAuditMiddleware
+from orchestrator_core.audit import log_mutations
 
 # dagster-webserver's defaults for its long-running database connections.
 _STATEMENT_TIMEOUT_MS = 15000
@@ -25,8 +27,25 @@ _POOL_MAX_OVERFLOW = 20
 
 
 class AuditedWebserver(DagsterWebserver):
-    def build_middleware(self) -> list[Middleware]:
-        return [*super().build_middleware(), Middleware(GraphQLAuditMiddleware)]
+    async def execute_graphql_request(
+        self,
+        request: Request,
+        query: str,
+        variables: dict[str, Any] | None,
+        operation_name: str | None,
+    ) -> JSONResponse:
+        # Every HTTP GraphQL request reaches this method, after Dagster has read it from any
+        # form; parsing the HTTP body ourselves missed GET and non-JSON requests.
+        response = await super().execute_graphql_request(request, query, variables, operation_name)
+        log_mutations(
+            request.headers,
+            query,
+            operation_name,
+            variables,
+            response.status_code,
+            bytes(response.body),
+        )
+        return response
 
 
 def main() -> None:

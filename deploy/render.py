@@ -259,6 +259,10 @@ def render(
             raise ValueError(f"no preview for {preview.location!r}: not a domain code location")
         if contract.environment != "dev":
             raise ValueError("previews run in dev only")
+    # Container Apps names have at most 32 characters; fail here, not halfway through a deploy.
+    too_long = [n for n in [*CODE_LOCATIONS, *(p.name for p in previews)] if len(app_name(n)) > 32]
+    if too_long:
+        raise ValueError(f"app names over 32 characters for {too_long}: shorten the domain name")
     workspace = workspace_yaml(previews)
     ids = contract.identities
     platform_image = images["platform"]

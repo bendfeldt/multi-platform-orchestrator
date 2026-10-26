@@ -178,3 +178,11 @@ def test_servers_have_probes():
 def test_no_catalog_job_without_purview():
     data = CONTRACT.model_dump() | {"catalog": None}
     assert "job-dagster-catalog.yaml" not in render(type(CONTRACT).model_validate(data), IMAGES)
+
+
+def test_app_names_over_32_characters_are_refused():
+    long_pr = Preview("example_sales", 1234567890)  # cl-example-sales-pr1234567890: 29 ok
+    render(CONTRACT, IMAGES | {long_pr.name: "acr.io/x@sha256:1"}, (long_pr,))
+    too_long = Preview("example_sales", 123456789012345)
+    with pytest.raises(ValueError, match="over 32 characters"):
+        render(CONTRACT, IMAGES | {too_long.name: "acr.io/x@sha256:1"}, (too_long,))
