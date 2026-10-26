@@ -76,9 +76,12 @@ both to Log Analytics for the workbook. dbt projects on Snowflake set
    | `FabricSemanticModelRefresh` | a semantic model refresh (optionally only some tables) |
    | `DatabricksJob` | an existing Databricks job |
    | `SnowflakeSql` | SQL statements in Snowflake |
+   | `orchestrator_core.powerbi.PowerBIReports` | nothing: puts a Power BI workspace's reports and dashboards in the catalog (extra `powerbi`) |
 
    Each lists the assets it `writes` and the upstream assets it `reads` as
    `platform/...` keys, e.g. `snowflake/sales/mart/fct_orders`. That is the lineage.
+   Optional `owners`, `tags` and `columns` (with `derived_from` for column lineage) fill the
+   catalog; see `defs/mart_orders/defs.yaml`.
 3. dbt: depend on `orchestrator-core[dbt]` plus the adapter, and use
    `type: orchestrator_core.dbt.CanonicalDbtProject` with `platform:` (and `fabric_workspace:`
    for Fabric). Databricks and Fabric profiles read a token from `DATABRICKS_TOKEN` or

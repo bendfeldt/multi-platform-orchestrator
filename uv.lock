@@ -632,6 +632,18 @@ wheels = [
 ]
 
 [[package]]
+name = "dagster-powerbi"
+version = "0.29.26"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "dagster" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/90/a1/8ea22b412d382cff4a05d11ea8d317140f00822c17e46110728268214456/dagster_powerbi-0.29.26.tar.gz", hash = "sha256:df9705c9a44d898838c62781a29a16c46bad82d7b104848a9a702d2e41f46932", size = 203854, upload-time = "2026-10-09T21:43:07.781Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/db/ca/04caa8d8a9a7ba86858fd1f59eb3dd2a4021452fc25d270a37b0456fc0ae/dagster_powerbi-0.29.26-py3-none-any.whl", hash = "sha256:dd98ae390c56d7e5f8006db250ec078dea88d45088f814a611d129d8e104a853", size = 17912, upload-time = "2026-10-09T21:43:06.435Z" },
+]
+
+[[package]]
 name = "dagster-shared"
 version = "1.13.26"
 source = { registry = "https://pypi.org/simple" }
@@ -1756,6 +1768,9 @@ dependencies = [
 dbt = [
     { name = "dagster-dbt" },
 ]
+powerbi = [
+    { name = "dagster-powerbi" },
+]
 webserver = [
     { name = "dagster-webserver" },
 ]
@@ -1769,13 +1784,14 @@ requires-dist = [
     { name = "dagster-azure", extras = ["container-apps"], specifier = "==0.29.26" },
     { name = "dagster-dbt", marker = "extra == 'dbt'", specifier = "==0.29.26" },
     { name = "dagster-postgres", specifier = "==0.29.26" },
+    { name = "dagster-powerbi", marker = "extra == 'powerbi'", specifier = "==0.29.26" },
     { name = "dagster-webserver", marker = "extra == 'webserver'", specifier = "==1.13.26" },
     { name = "databricks-sdk", specifier = ">=0.70" },
     { name = "requests", specifier = ">=2.32" },
     { name = "snowflake-connector-python", specifier = ">=3.17" },
     { name = "sqlalchemy", specifier = ">=2.0,<2.1" },
 ]
-provides-extras = ["webserver", "dbt"]
+provides-extras = ["webserver", "dbt", "powerbi"]
 
 [[package]]
 name = "orderly-set"

@@ -184,3 +184,47 @@ def test_yaml_component_materializes_what_it_writes():
     assert result.success
     [event] = result.get_asset_materialization_events()
     assert event.materialization.metadata["fabric_job_instance_id"].value == "job-1"
+
+
+def _mart_spec():
+    from pathlib import Path
+
+    import example_sales
+
+    defs = dg.load_from_defs_folder(path_within_project=Path(example_sales.__file__).parent)
+    key = dg.AssetKey(["snowflake", "sales", "mart", "fct_orders"])
+    [asset] = [a for a in defs.assets or [] if isinstance(a, dg.AssetsDefinition) and key in a.keys]
+    return next(s for s in asset.specs if s.key == key)
+
+
+def test_catalog_fields_reach_the_asset_definition():
+    spec = _mart_spec()
+    assert spec.owners == ["team:sales-data"]
+    assert {"layer": "mart", "pii": "false"}.items() <= spec.tags.items()  # plus dagster/kind/*
+    schema = spec.metadata["dagster/column_schema"]
+    assert [(c.name, c.type) for c in schema.columns] == [
+        ("order_id", "number"),
+        ("amount", "number(12,2)"),
+    ]
+    lineage = spec.metadata["dagster/column_lineage"]
+    [dep] = lineage.deps_by_column["amount"]
+    assert dep.asset_key == dg.AssetKey(["databricks", "sales", "silver", "orders"])
+    assert dep.column_name == "amount"
+
+
+@pytest.mark.parametrize(
+    "columns, message",
+    [
+        ({"snowflake/other/t": [{"name": "x"}]}, "does not write"),
+        ({"snowflake/x/y/z": [{"name": "x", "derived_from": ["nowhere/t:x"]}]}, "reads or writes"),
+        ({"snowflake/x/y/z": [{"name": "x", "derived_from": ["no-column"]}]}, "reads or writes"),
+    ],
+)
+def test_wrong_column_declarations_are_refused(columns, message):
+    from orchestrator_core.components import SnowflakeSql
+
+    job = SnowflakeSql.model_validate(
+        {"name": "j", "sql": "select 1", "writes": ["snowflake/x/y/z"], "columns": columns}
+    )
+    with pytest.raises(ValueError, match=message):
+        job._column_metadata("snowflake/x/y/z")

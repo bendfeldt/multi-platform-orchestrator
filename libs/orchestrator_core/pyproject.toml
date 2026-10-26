@@ -26,6 +26,10 @@ webserver = ["dagster-webserver==1.13.26"]
 dbt = [
     "dagster-dbt==0.29.26",
 ]
+# Power BI reports and dashboards in the catalog (orchestrator_core.powerbi).
+powerbi = [
+    "dagster-powerbi==0.29.26",
+]
 
 [build-system]
 requires = ["uv_build>=0.11,<0.12"]

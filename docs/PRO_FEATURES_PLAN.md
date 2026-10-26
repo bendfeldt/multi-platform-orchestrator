@@ -1,6 +1,6 @@
 # Dagster+ Pro Features on Open-Source Dagster — Plan
 
-Status: **Phases A (role-based access, audit), B (alerts), C (cost and insights) and D (Fabric cost) implemented and tested; phases E–H planned.**
+Status: **Phases A–E implemented and tested (role-based access, audit, alerts, cost and insights, Fabric cost, catalog); phases F–H planned.**
 Builds on [PLAN.md](PLAN.md). Decisions in §11.
 
 How every statement here was checked:
@@ -125,8 +125,9 @@ Dagster emits it [S]; check-failure and freshness alerts cover the same ground.
 
 Each sensor writes one JSON line per alert to stdout: `{"mpo_alert": kind, "time",
 "severity", "location", "job" | "asset" + "check" | "instigator" | "daemon", "run_id",
-"launched_by", "summary", "url"}`. `location` is the code location (= domain). Owners
-(`AssetSpec.owners`) join the line in phase E.
+"launched_by", "summary", "url"}`. `location` is the code location (= domain). Asset
+owners are not added: the sensors run in `mpo_ops` and cannot read other code locations'
+definitions, so routing stays by code location; owners show in the catalog.
 
 Failures a sensor cannot see (the daemon itself down, schedule/sensor tick failures, code
 locations that fail to load) are checked by a **health job**: a scheduled Container Apps Job
@@ -373,6 +374,19 @@ redundancy only if chosen.
   tables column by column.
 - 6 more tests (operation ID match, item + time fallback, Preview, the Kusto call, GUID check,
   the example's Fabric component end to end).
+
+**Phase E, as built:**
+- Platform components take `owners`, `tags` and `columns` (type, description, column tags,
+  `derived_from: ["<asset key>:<column>"]`); they become `dagster/column_schema` and
+  `dagster/column_lineage` on the definition. Unknown assets or upstreams are refused at load.
+- dbt: `include_metadata: [column_metadata]` (dagster-dbt's own option). A real dbt build in the
+  tests (DuckDB) shows materializations, column schema and column lineage all under the
+  canonical keys, so `CanonicalDbtProject`'s keys reach dagster-dbt's event handling too.
+- `orchestrator_core.powerbi.PowerBIReports` (extra `powerbi`): dagster-powerbi with
+  `EntraPowerBICredentials` (managed-identity token for Power BI, no secret) and the
+  workspace APIs (no admin scan). Reports `fabric/<ws>/report/<name>` depend on the canonical
+  semantic model key; dashboards on their tiles' reports. Semantic models are only added on
+  request, because the refresh component defines them.
 
 ## 12. Sources
 
