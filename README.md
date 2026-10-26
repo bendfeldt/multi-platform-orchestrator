@@ -62,7 +62,9 @@ credential or a managed identity.
 3. **Environment values**: copy the bootstrap outputs into `environment/envs/<env>.tfvars`
    (and the dev file's `acr_pull_principal_ids` with the test and prod app deployers).
 4. **CI**: environments `dev`, `test`, `prod` (GitHub) or `mpo-infra-<env>` (ADO) with approvals
-   on test and prod; GitHub variables `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
+   on test and prod. Solution repo, for pull-request previews in dev: GitHub environments
+   `preview` (required reviewers) and `preview-cleanup` (deployment branch `main` only), both
+   with dev's app-deployer variables; GitHub variables `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
    `AZURE_SUBSCRIPTION_ID`; ADO service connections `mpo-infra-<env>` with workload identity
    federation.
 5. The solution repo needs each environment's contract URL (`bootstrap` output

@@ -84,7 +84,20 @@ run "only_github_when_ado_is_unused" {
     azure_devops = null
   }
   assert {
-    condition     = toset(keys(module.dev.credentials)) == toset(["app-github", "infra-github"])
+    condition     = toset(keys(module.dev.credentials)) == toset(["app-github", "infra-github", "app-github-preview", "app-github-preview-cleanup"])
     error_message = "No ADO credential may exist when ADO is not configured."
+  }
+}
+
+run "previews_log_in_to_dev_only" {
+  command = plan
+
+  assert {
+    condition     = module.dev.credentials["app-github-preview"].subject == "repo:bendfeldt/mpo:environment:preview" && module.dev.credentials["app-github-preview-cleanup"].subject == "repo:bendfeldt/mpo:environment:preview-cleanup"
+    error_message = "Dev's app deployer trusts the preview environments."
+  }
+  assert {
+    condition     = length([for k in keys(module.test.credentials) : k if strcontains(k, "preview")]) == 0 && length([for k in keys(module.prod.credentials) : k if strcontains(k, "preview")]) == 0
+    error_message = "Previews must never reach test or prod."
   }
 }

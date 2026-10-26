@@ -49,6 +49,13 @@ locals {
       issuer   = "https://token.actions.githubusercontent.com"
       subject  = "repo:${var.github.owner}/${d.repo}:environment:${var.environment}"
     } },
+    # Dev only: pull-request previews (solution repo, docs/PRO_FEATURES_PLAN.md §7.2) from the
+    # GitHub environments "preview" (required reviewers) and "preview-cleanup" (main only).
+    var.github == null || var.environment != "dev" ? {} : { for env in ["preview", "preview-cleanup"] : "app-github-${env}" => {
+      deployer = "app"
+      issuer   = "https://token.actions.githubusercontent.com"
+      subject  = "repo:${var.github.owner}/${var.github.solution_repo}:environment:${env}"
+    } },
     var.azure_devops == null ? {} : { for key, d in local.deployers : "${key}-ado" => {
       deployer = key
       issuer   = "https://vstoken.dev.azure.com/${var.azure_devops.organization_id}"
