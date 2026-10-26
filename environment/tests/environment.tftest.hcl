@@ -302,6 +302,15 @@ run "alert_rules_read_only_logs_and_cannot_be_faked" {
   }
 }
 
+run "platform_errors_reach_the_health_groups" {
+  command = plan
+
+  assert {
+    condition     = strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.platform_errors[0].criteria[0].query, "ContainerAppSystemLogs_CL") && azurerm_monitor_scheduled_query_rules_alert_v2.platform_errors[0].identity[0].type == "UserAssigned"
+    error_message = "Container Apps errors alert the health groups, queried as the alert identity."
+  }
+}
+
 run "unknown_receiver_types_are_refused" {
   command = plan
 

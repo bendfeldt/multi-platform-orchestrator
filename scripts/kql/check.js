@@ -37,6 +37,11 @@ const logs = globals([
     TimeGenerated: "datetime", Log_s: "string", ContainerAppName_s: "string",
     ContainerJobName_s: "string", ContainerGroupName_s: "string",
   }),
+  // Only the documented columns (container-apps/log-monitoring); jobs: column_ifexists.
+  table("ContainerAppSystemLogs_CL", {
+    TimeGenerated: "datetime", Log_s: "string", LogLevel_s: "string",
+    ContainerAppName_s: "string", RevisionName_s: "string", EnvironmentName_s: "string",
+  }),
   // The cost and insight tables, from the same file Terraform creates them from.
   ...Object.entries(require(path.join(repo, "environment/insights/tables.json")))
     .map(([name, columns]) => table(name, columns)),

@@ -330,3 +330,53 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "health_missing" {
 
   depends_on = [azurerm_role_assignment.alerts_logs]
 }
+
+# Container Apps' own errors: failed revisions, crash loops, failing probes
+# (ContainerAppSystemLogs_CL, LogLevel_s "Error"). One alert per app; to the health groups.
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "platform_errors" {
+  count = length(try(local.alerts.health_action_groups, [])) > 0 ? 1 : 0
+
+  name                    = "mpo-${var.environment}-platform-errors"
+  description             = "Container Apps reported errors for a Dagster app in ${var.environment} (revisions, restarts, probes)."
+  location                = var.location
+  resource_group_name     = var.resource_group_name
+  scopes                  = [azurerm_log_analytics_workspace.this.id]
+  severity                = 2
+  evaluation_frequency    = "PT5M"
+  window_duration         = "PT15M"
+  auto_mitigation_enabled = true
+  skip_query_validation   = true
+
+  criteria {
+    query = join("\n", compact(split("\n", <<-KQL
+      ContainerAppSystemLogs_CL
+      | where LogLevel_s == "Error"
+      | extend app = coalesce(ContainerAppName_s, column_ifexists("ContainerJobName_s", ""), "-")
+      | project TimeGenerated, app, RevisionName_s, Log_s
+    KQL
+    )))
+    time_aggregation_method = "Count"
+    operator                = "GreaterThan"
+    threshold               = 0
+    dimension {
+      name     = "app"
+      operator = "Include"
+      values   = ["*"]
+    }
+    failing_periods {
+      minimum_failing_periods_to_trigger_alert = 1
+      number_of_evaluation_periods             = 1
+    }
+  }
+
+  action {
+    action_groups = [for g in local.alerts.health_action_groups : azurerm_monitor_action_group.this[g].id]
+  }
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.alerts.id]
+  }
+
+  depends_on = [azurerm_role_assignment.alerts_logs]
+}
