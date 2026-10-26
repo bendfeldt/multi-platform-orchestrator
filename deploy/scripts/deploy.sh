@@ -8,20 +8,13 @@ out="build/aca"
 
 mkdir -p build
 az storage blob download --auth-mode login --blob-url "$CONTRACT_URL" --file build/contract.json --only-show-errors >/dev/null
-uv run --frozen --all-packages python deploy/render.py --contract build/contract.json --images "$images" --out "$out"
 rg="$(jq -r .resource_group build/contract.json)"
-
-apply() {  # apply <app|job> <name>
-  local kind="$1" name="$2"
-  local file="$out/$kind-$name.yaml" cmd=(az containerapp)
-  if [ "$kind" = job ]; then cmd+=(job); fi
-  if "${cmd[@]}" show --name "$name" --resource-group "$rg" --only-show-errors >/dev/null 2>&1; then
-    "${cmd[@]}" update --name "$name" --resource-group "$rg" --yaml "$file" --only-show-errors >/dev/null
-  else
-    "${cmd[@]}" create --name "$name" --resource-group "$rg" --yaml "$file" --only-show-errors >/dev/null
-  fi
-  echo "applied $name"
-}
+# shellcheck source=deploy/scripts/lib.sh
+source deploy/scripts/lib.sh
+# Running previews (dev only) stay, with their images, so this deploy keeps them in the workspace.
+running_images | jq --slurpfile new "$images" '. + $new[0]' >build/images.json
+uv run --frozen --all-packages python deploy/render.py --contract build/contract.json \
+  --images build/images.json --previews "$(previews)" --out "$out"
 
 # 1. Database logins and schema first; nothing else changes if this fails.
 apply job dagster-migrate

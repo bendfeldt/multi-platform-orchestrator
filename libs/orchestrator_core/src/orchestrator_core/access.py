@@ -8,12 +8,14 @@ Container Apps' built-in Entra sign-in passes the user's claims in `X-MS-CLIENT-
     Dagster.Editor.<location>     everything scoped to that code location
     Dagster.Admin                 everything, including workspace-wide settings
 
-Dagster's GraphQL layer enforces these per code location, also for existing runs.
+Dagster's GraphQL layer enforces these per code location, also for existing runs. A pull
+request preview `<location>_pr<N>` (orchestrator_core.preview) has its location's roles.
 """
 
 import base64
 import binascii
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -41,12 +43,20 @@ LAUNCHER_PERMISSIONS = frozenset(
     }
 )
 _DENIED = "Your Dagster role does not allow this in this code location."
+_PREVIEW = re.compile(r"^(?P<location>.+)_pr\d+$")
 
 
 @dataclass(frozen=True)
 class Access:
     admin: bool = False
     location_roles: Mapping[str, str] = field(default_factory=dict)  # location -> Launcher|Editor
+
+    def role_for(self, location: str) -> str | None:
+        """The role on a code location; a preview `<location>_pr<N>` has its location's."""
+        if location in self.location_roles:
+            return self.location_roles[location]
+        preview = _PREVIEW.match(location)
+        return self.location_roles.get(preview["location"]) if preview else None
 
 
 def access_from_headers(headers: Mapping[str, str]) -> Access:
@@ -81,7 +91,7 @@ class RoleRequestContext(WorkspaceRequestContext):
         self._access = access
 
     def permissions_for_location(self, *, location_name: str) -> Mapping[str, PermissionResult]:
-        role = self._access.location_roles.get(location_name)
+        role = self._access.role_for(location_name)
         if self._access.admin or role == "Editor":
             return get_location_scoped_user_permissions(False)
         allowed = LAUNCHER_PERMISSIONS if role == "Launcher" else frozenset()

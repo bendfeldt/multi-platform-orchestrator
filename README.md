@@ -39,12 +39,18 @@ digests to test and prod after approval. Either CI system works:
 - **GitHub Actions** (`.github/workflows/deploy.yml`): create environments `dev`, `test`, `prod`
   with the variables `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`,
   `ACR_LOGIN_SERVER`, `CONTRACT_URL`, and required reviewers on test and prod.
-- **Azure DevOps** (`.azuredevops/pipelines/deploy.yml`): service connections `mpo-dev`,
-  `mpo-test`, `mpo-prod` (workload identity federation), environments `mpo-<env>` with
-  approvals, and variable groups `mpo-<env>` with `ACR_LOGIN_SERVER`, `CONTRACT_URL`.
+- **Azure DevOps** (`.azuredevops/pipelines/deploy.yml`): service connections `mpo-app-dev`,
+  `mpo-app-test`, `mpo-app-prod` (workload identity federation; the names the app deployers'
+  federated credentials trust), environments `mpo-<env>` with approvals, and variable groups
+  `mpo-<env>` with `ACR_LOGIN_SERVER`, `CONTRACT_URL`.
 
 No secrets in either: Azure login is federated, and the variables are IDs and URLs. The infra
 repo creates the identities and publishes each environment's contract at `CONTRACT_URL`.
+
+Pull requests get a change report (what changes in assets, checks, schedules, sensors). Label
+one `preview` and approve the `preview` environment to run its changed code locations in dev as
+`<domain>_pr<N>` (own asset keys, no automation); closed pull requests' previews are removed
+hourly.
 
 `deploy/scripts/deploy.sh` renders the apps from the contract (`deploy/render.py`), runs the
 in-VNet migrate job, then updates code servers, daemon, cleanup job and the webserver.

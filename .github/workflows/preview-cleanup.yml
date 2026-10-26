@@ -1,0 +1,42 @@
+name: preview-cleanup
+
+# Removes previews whose pull request is closed. Runs from main only: environment
+# "preview-cleanup" allows deployment branch main and nothing else (no reviewers), with dev's
+# variables and a federated credential subject repo:<org>/<repo>:environment:preview-cleanup.
+
+on:
+  schedule:
+    - cron: "41 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dev-workspace
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    environment: preview-cleanup
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.11.32"
+      - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          CONTRACT_URL: ${{ vars.CONTRACT_URL }}
+        run: deploy/scripts/preview-cleanup.sh "$GITHUB_REPOSITORY"

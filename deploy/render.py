@@ -8,7 +8,9 @@ container gets which identity (docs/PLAN.md §5.1).
 """
 
 import argparse
+import hashlib
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -17,8 +19,59 @@ from orchestrator_core.contract import Contract, Identity, load_contract
 
 REPO = Path(__file__).resolve().parent.parent
 CODE_LOCATIONS = sorted(path.name for path in (REPO / "code_locations").iterdir() if path.is_dir())
-WORKSPACE = "/opt/dagster/workspace.yaml"
+# The workspace file is a Container Apps secret mounted here, so adding a code location or a
+# preview needs no image rebuild (docs/PRO_FEATURES_PLAN.md §7.2).
+WORKSPACE_DIR = "/opt/dagster/workspace"
+WORKSPACE = f"{WORKSPACE_DIR}/workspace.yaml"
 OPS_LOCATION = "mpo_ops"
+PREVIEW_TAG = "mpo-preview"
+
+
+@dataclass(frozen=True)
+class Preview:
+    """A pull request's version of a code location, deployed to dev (orchestrator_core.preview)."""
+
+    location: str
+    pr: int
+
+    @property
+    def name(self) -> str:
+        return f"{self.location}_pr{self.pr}"
+
+    @classmethod
+    def parse(cls, value: str) -> "Preview":  # "<location>:<pr>"
+        location, _, pr = value.partition(":")
+        return cls(location, int(pr))
+
+
+def workspace_yaml(previews: tuple[Preview, ...] = ()) -> str:
+    """One gRPC entry per code location and preview; container app `cl-<name>` serves it."""
+    names = [*CODE_LOCATIONS, *(p.name for p in previews)]
+    entries = [
+        {"grpc_server": {"host": app_name(name), "port": 80, "location_name": name}}
+        for name in names
+    ]
+    return yaml.safe_dump({"load_from": entries}, sort_keys=False)
+
+
+def _with_workspace(resource: dict[str, Any], workspace: str) -> dict[str, Any]:
+    properties = resource["properties"]
+    properties["configuration"]["secrets"] = [{"name": "workspace", "value": workspace}]
+    template = properties["template"]
+    template["volumes"] = [
+        {
+            "name": "workspace",
+            "storageType": "Secret",
+            "secrets": [{"secretRef": "workspace", "path": "workspace.yaml"}],
+        }
+    ]
+    container = template["containers"][0]
+    container["volumeMounts"] = [{"volumeName": "workspace", "mountPath": WORKSPACE_DIR}]
+    # A changed secret alone starts no new revision; a changed variable does, so every
+    # workspace change reaches the running containers.
+    digest = hashlib.sha256(workspace.encode()).hexdigest()
+    container["env"].append({"name": "MPO_WORKSPACE_SHA256", "value": digest})
+    return resource
 
 
 def app_name(code_location: str) -> str:
@@ -162,11 +215,19 @@ def _job(
     return _resource(contract, identity, image, command, env, 0.5, "1Gi", configuration)
 
 
-def render(contract: Contract, images: dict[str, str]) -> dict[str, dict[str, Any]]:
+def render(
+    contract: Contract, images: dict[str, str], previews: tuple[Preview, ...] = ()
+) -> dict[str, dict[str, Any]]:
     """Returns `{file name: resource}` for every app and job of the environment."""
     missing = [loc for loc in CODE_LOCATIONS if loc not in contract.identities.domains]
     if missing:
         raise ValueError(f"contract has no identity for code locations {missing}")
+    for preview in previews:
+        if preview.location not in CODE_LOCATIONS or preview.location == OPS_LOCATION:
+            raise ValueError(f"no preview for {preview.location!r}: not a domain code location")
+        if contract.environment != "dev":
+            raise ValueError("previews run in dev only")
+    workspace = workspace_yaml(previews)
     ids = contract.identities
     platform_image = images["platform"]
     ui_url = f"https://{contract.ingress.hostname}"  # links in alerts
@@ -181,7 +242,7 @@ def render(contract: Contract, images: dict[str, str]) -> dict[str, dict[str, An
     webserver += ["-w", WORKSPACE]
 
     def web(ingress: dict[str, Any]) -> dict[str, Any]:
-        return _app(
+        app = _app(
             contract,
             ids.webserver,
             platform_image,
@@ -190,19 +251,23 @@ def render(contract: Contract, images: dict[str, str]) -> dict[str, dict[str, An
             ingress,
             min_replicas=0,
         )
+        return _with_workspace(app, workspace)
 
     resources = {
         "app-dagster-web.yaml": web(web_ingress),
         # First deploy only: reachable inside the environment until Entra sign-in is on.
         "app-dagster-web.initial.yaml": web(web_ingress | {"external": False}),
-        "app-dagster-daemon.yaml": _app(
-            contract,
-            ids.platform,
-            platform_image,
-            ["dagster-daemon", "run", "-w", WORKSPACE],
-            _common_env(contract, ids.platform),
-            None,
-            min_replicas=1,
+        "app-dagster-daemon.yaml": _with_workspace(
+            _app(
+                contract,
+                ids.platform,
+                platform_image,
+                ["dagster-daemon", "run", "-w", WORKSPACE],
+                _common_env(contract, ids.platform),
+                None,
+                min_replicas=1,
+            ),
+            workspace,
         ),
         "job-dagster-migrate.yaml": _job(
             contract,
@@ -228,16 +293,26 @@ def render(contract: Contract, images: dict[str, str]) -> dict[str, dict[str, An
             schedule="17 3 * * *",
         ),
         # Alerts on what sensors cannot see: daemon down, failed ticks, broken code locations.
-        "job-dagster-health.yaml": _job(
-            contract,
-            ids.admin,
-            platform_image,
-            ["python", "-m", "orchestrator_core.health", WORKSPACE],
-            _common_env(contract, ids.admin) | {"MPO_UI_URL": ui_url},
-            schedule="*/5 * * * *",
+        "job-dagster-health.yaml": _with_workspace(
+            _job(
+                contract,
+                ids.admin,
+                platform_image,
+                ["python", "-m", "orchestrator_core.health", WORKSPACE],
+                _common_env(contract, ids.admin) | {"MPO_UI_URL": ui_url},
+                schedule="*/5 * * * *",
+            ),
+            workspace,
         ),
     }
-    for location in CODE_LOCATIONS:
+    servers = [(location, location, f"{location}.definitions", {}) for location in CODE_LOCATIONS]
+    servers += [
+        # A preview: the pull request's image, as the domain (same identity and settings).
+        (p.name, p.location, "orchestrator_core.preview",
+         {"MPO_PREVIEW_MODULE": f"{p.location}.definitions", "MPO_PREVIEW_PR": str(p.pr)})
+        for p in previews
+    ]  # fmt: skip
+    for name, location, module, extra_env in servers:
         identity = ids.domains[location]
         # Runs of this code location get the same identity and settings as its code server.
         run_env = {
@@ -245,11 +320,12 @@ def render(contract: Contract, images: dict[str, str]) -> dict[str, dict[str, An
             "AZURE_CLIENT_ID": identity.client_id,
             **_platform_env(contract, location),
             **_ops_env(contract, location),
+            **extra_env,
         }
         container_context = {
             "aca": {
                 "identity_id": identity.resource_id,
-                "env_vars": [f"{name}={value}" for name, value in run_env.items()],
+                "env_vars": [f"{key}={value}" for key, value in run_env.items()],
             }
         }
         command = [
@@ -261,16 +337,16 @@ def render(contract: Contract, images: dict[str, str]) -> dict[str, dict[str, An
             "-p",
             "4000",
             "-m",
-            f"{location}.definitions",
+            module,
             "--container-image",
-            images[location],
+            images[name],
             "--container-context",
             json.dumps(container_context),
         ]
-        resources[f"app-{app_name(location)}.yaml"] = _app(
+        app = resources[f"app-{app_name(name)}.yaml"] = _app(
             contract,
             identity,
-            images[location],
+            images[name],
             command,
             _common_env(contract, identity) | run_env | {"MPO_UI_URL": ui_url},
             # Plain HTTP/2 inside the environment only; gRPC from the webserver and daemon.
@@ -279,6 +355,8 @@ def render(contract: Contract, images: dict[str, str]) -> dict[str, dict[str, An
             cpu=0.25,
             memory="0.5Gi",
         )
+        if extra_env:  # how deploy scripts find running previews (deploy/scripts/lib.sh)
+            app["tags"] = {PREVIEW_TAG: f"{location}:{extra_env['MPO_PREVIEW_PR']}"}
     return resources
 
 
@@ -287,9 +365,14 @@ def main() -> None:
     parser.add_argument("--contract", required=True)
     parser.add_argument("--images", required=True)
     parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument(
+        "--previews", default="", help="dev only: '<location>:<pr>,...' (deploy/scripts/preview.sh)"
+    )
     args = parser.parse_args()
+    previews = tuple(Preview.parse(v) for v in args.previews.split(",") if v)
 
-    resources = render(load_contract(args.contract), json.loads(Path(args.images).read_text()))
+    images = json.loads(Path(args.images).read_text())
+    resources = render(load_contract(args.contract), images, previews)
     args.out.mkdir(parents=True, exist_ok=True)
     for name, resource in resources.items():
         (args.out / name).write_text(yaml.safe_dump(resource, sort_keys=False))

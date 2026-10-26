@@ -187,3 +187,13 @@ def test_roles_claim_with_short_type_and_highest_role_wins():
         claim_type="roles",
     )
     assert access_from_headers(headers) == Access(location_roles={"example_sales": "Editor"})
+
+
+def test_a_preview_has_the_roles_of_its_code_location():
+    from orchestrator_core.access import Access
+
+    access = Access(location_roles={"example_sales": "Launcher", "finance": "Editor"})
+    assert access.role_for("example_sales_pr12") == "Launcher"
+    assert access.role_for("finance_pr3") == "Editor"
+    assert access.role_for("example_sales") == "Launcher"
+    assert access.role_for("marketing_pr1") is None and access.role_for("example") is None

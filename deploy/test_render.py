@@ -3,7 +3,7 @@ import json
 import pytest
 import yaml
 from orchestrator_core.contract import load_contract
-from render import CODE_LOCATIONS, REPO, app_name, render
+from render import CODE_LOCATIONS, REPO, WORKSPACE, Preview, app_name, render, workspace_yaml
 
 CONTRACT = load_contract(REPO / "libs/orchestrator_core/tests/contract.dev.json")
 IMAGES = {"platform": "acr.io/mpo-platform@sha256:p"} | {
@@ -93,8 +93,65 @@ def test_code_location_without_identity_is_refused():
         render(type(CONTRACT).model_validate(data), IMAGES)
 
 
-def test_azure_workspace_lists_every_code_location():
-    workspace = yaml.safe_load((REPO / "deploy/workspace.azure.yaml").read_text())
-    entries = [entry["grpc_server"] for entry in workspace["load_from"]]
+def _mounted_workspace(resource: dict) -> str:
+    properties = resource["properties"]
+    [secret] = properties["configuration"]["secrets"]
+    [volume] = properties["template"]["volumes"]
+    [mount] = properties["template"]["containers"][0]["volumeMounts"]
+    assert volume["storageType"] == "Secret" and volume["secrets"][0]["secretRef"] == secret["name"]
+    assert f"{mount['mountPath']}/{volume['secrets'][0]['path']}" == WORKSPACE
+    return secret["value"]
+
+
+def test_workspace_lists_every_code_location_and_reaches_its_readers():
+    resources = render(CONTRACT, IMAGES)
+    entries = [e["grpc_server"] for e in yaml.safe_load(workspace_yaml())["load_from"]]
     assert sorted(e["location_name"] for e in entries) == CODE_LOCATIONS
     assert all(e["host"] == app_name(e["location_name"]) for e in entries)
+    for name in ("app-dagster-web.yaml", "app-dagster-daemon.yaml", "job-dagster-health.yaml"):
+        assert _mounted_workspace(resources[name]) == workspace_yaml(), name
+
+
+def _env(resource: dict) -> dict[str, str]:
+    return {
+        e["name"]: e["value"] for e in resource["properties"]["template"]["containers"][0]["env"]
+    }
+
+
+def test_a_preview_runs_as_its_domain_and_rolls_the_readers():
+    preview = Preview("example_sales", 12)
+    images = IMAGES | {preview.name: "acr.io/mpo-example-sales@sha256:pr12"}
+    before, after = render(CONTRACT, IMAGES), render(CONTRACT, images, (preview,))
+    app = after["app-cl-example-sales-pr12.yaml"]
+    assert app["tags"] == {"mpo-preview": "example_sales:12"}
+    assert "tags" not in after["app-cl-example-sales.yaml"]
+    domain = CONTRACT.identities.domains["example_sales"]
+    assert _identity(app) == (domain.resource_id, domain.client_id)
+    container = app["properties"]["template"]["containers"][0]
+    assert container["image"] == "acr.io/mpo-example-sales@sha256:pr12"
+    command = container["command"]
+    assert command[command.index("-m") + 1] == "orchestrator_core.preview"
+    run_env = json.loads(command[command.index("--container-context") + 1])["aca"]["env_vars"]
+    assert {"MPO_PREVIEW_MODULE=example_sales.definitions", "MPO_PREVIEW_PR=12"} <= set(run_env)
+    hosts = [
+        e["grpc_server"]["host"] for e in yaml.safe_load(workspace_yaml((preview,)))["load_from"]
+    ]
+    assert "cl-example-sales-pr12" in hosts
+    for name in ("app-dagster-web.yaml", "app-dagster-daemon.yaml", "job-dagster-health.yaml"):
+        assert _mounted_workspace(after[name]) == workspace_yaml((preview,))
+        # A new workspace changes the template, so the app gets a new revision that reads it.
+        assert (
+            _env(after[name])["MPO_WORKSPACE_SHA256"] != _env(before[name])["MPO_WORKSPACE_SHA256"]
+        )
+
+
+@pytest.mark.parametrize("location", ["mpo_ops", "nowhere"])
+def test_previews_only_of_domains(location):
+    with pytest.raises(ValueError, match="no preview"):
+        render(CONTRACT, IMAGES, (Preview(location, 1),))
+
+
+def test_previews_only_in_dev():
+    data = CONTRACT.model_dump() | {"environment": "test"}
+    with pytest.raises(ValueError, match="dev only"):
+        render(type(CONTRACT).model_validate(data), IMAGES, (Preview("example_sales", 1),))
