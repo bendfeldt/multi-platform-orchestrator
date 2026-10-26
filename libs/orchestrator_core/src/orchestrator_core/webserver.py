@@ -36,16 +36,21 @@ class AuditedWebserver(DagsterWebserver):
     ) -> JSONResponse:
         # Every HTTP GraphQL request reaches this method, after Dagster has read it from any
         # form; parsing the HTTP body ourselves missed GET and non-JSON requests.
-        response = await super().execute_graphql_request(request, query, variables, operation_name)
-        log_mutations(
-            request.headers,
-            query,
-            operation_name,
-            variables,
-            response.status_code,
-            bytes(response.body),
-        )
-        return response
+        response = None
+        try:
+            response = await super().execute_graphql_request(
+                request, query, variables, operation_name
+            )
+            return response
+        finally:  # also when execution fails: the attempt is audited
+            log_mutations(
+                request.headers,
+                query,
+                operation_name,
+                variables,
+                response.status_code if response else 500,
+                bytes(response.body) if response else b"",
+            )
 
 
 def main() -> None:

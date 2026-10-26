@@ -38,6 +38,7 @@ Run success per job:
 
 ```kusto
 MpoInsights_CL
+| summarize arg_max(TimeGenerated, *) by Day, Scope, Location, Job, Asset // a re-run day counts once
 | where Day > ago(30d) and Scope == "job"
 | summarize Runs = sum(Runs), Succeeded = sum(Succeeded) by Location, Job
 | extend success_pct = round(100.0 * Succeeded / Runs, 2)
@@ -48,6 +49,7 @@ Freshness per asset:
 
 ```kusto
 MpoInsights_CL
+| summarize arg_max(TimeGenerated, *) by Day, Scope, Location, Job, Asset // a re-run day counts once
 | where Day > ago(30d) and Scope == "asset"
 | summarize days = dcount(Day), failed_days = dcountif(Day, FreshnessFailures > 0) by Asset
 | extend fresh_pct = round(100.0 * (days - failed_days) / days, 2)

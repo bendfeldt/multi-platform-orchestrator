@@ -93,8 +93,8 @@ class PowerBIReports(dg.Component, dg.Model, dg.Resolvable):
         except (requests.RequestException, AzureError) as error:
             # The catalog entries can wait; the domain's jobs must still load.
             dg.get_dagster_logger().warning(
-                f"Power BI workspace {self.workspace_id} not loaded, its reports are missing "
-                f"until the next load: {error}"
+                f"Power BI workspace {self.workspace_id} not loaded; its reports are missing until "
+                f"the code location reloads (restart, deploy or Reload in the UI): {error}"
             )
             return dg.Definitions()
         specs = [

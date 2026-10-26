@@ -143,7 +143,7 @@ via RBAC by the app deployer):
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "environment": "dev",
   "location": "westeurope",
   "subscription_id": "…",
@@ -158,14 +158,17 @@ via RBAC by the app deployer):
     "admin": { "resource_id": "…", "client_id": "…", "principal_name": "…" },
     "domains": { "sales": { "resource_id": "…", "client_id": "…", "principal_name": "…" } }
   },
-  "auth": { "tenant_id": "…", "ui_app_client_id": "…", "ui_ro_app_client_id": "…" },
-  "ingress": { "full_hostname": "…", "readonly_hostname": "…" },
+  "auth": { "tenant_id": "…", "ui_app_client_id": "…" },
+  "ingress": { "hostname": "…" },
   "platforms": {
     "databricks": { "host": "…" },
     "snowflake": { "account": "…", "domains": { "sales": { "role": "…", "warehouse": "…" } } }
   }
 }
 ```
+
+Optional fields (cost reports, workbook, Purview: docs/PRO_FEATURES_PLAN.md) are left out here;
+`contract.py` lists them all.
 
 - The schema is the pydantic model in `orchestrator_core/contract.py` in the **solution** repo,
   which validates the contract when it reads it. The infra repo only publishes outputs and has no dependency on the solution repo.

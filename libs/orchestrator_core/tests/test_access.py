@@ -221,3 +221,22 @@ def test_a_preview_has_the_roles_of_its_code_location():
     assert access.role_for("finance_pr3") == "Editor"
     assert access.role_for("example_sales") == "Launcher"
     assert access.role_for("marketing_pr1") is None and access.role_for("example") is None
+
+
+def test_a_mutation_that_fails_inside_dagster_is_still_audited(client, capsys, monkeypatch):
+    from dagster_webserver.webserver import DagsterWebserver
+
+    async def broken(*args, **kwargs):
+        raise RuntimeError("database down")
+
+    monkeypatch.setattr(DagsterWebserver, "execute_graphql_request", broken)
+    client, _ = client
+    with pytest.raises(RuntimeError):
+        client.post("/graphql", json={"query": launch("example_sales")},
+                    headers=principal("Dagster.Launcher.example_sales"))  # fmt: skip
+    [record] = [
+        json.loads(line)
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith('{"mpo_audit"')
+    ]
+    assert (record["mutations"], record["http_status"]) == (["launchRun"], 500)

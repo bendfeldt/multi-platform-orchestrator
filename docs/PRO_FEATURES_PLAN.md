@@ -7,8 +7,8 @@ How every statement here was checked:
 
 - **[S]** read in the installed source (Dagster 1.13.26, dagster-graphql, dagster-webserver,
   dagster-dbt / dagster-azure 0.29.26, dagster-powerbi 0.29.26)
-- **[P]** proven by a prototype against the real webserver and GraphQL API, see
-  [research/pro_features](../research/pro_features/README.md)
+- **[P]** proven against the real webserver and GraphQL API; the prototypes became the tests
+  in `libs/orchestrator_core/tests` (test_access.py, test_alerts.py)
 - **[D]** vendor documentation (links in §12)
 - **[?]** not verifiable without Azure / the platforms → listed as a spike (§10)
 
@@ -279,7 +279,7 @@ No external party guarantees this; it is your SLA to run.
 | S7 | Event Hub receiver without a managed identity: does the hub need a role? | Alert arrives on the hub; note any role needed |
 | S8 | May the infra role (`MANAGE GRANTS`) grant `SNOWFLAKE.USAGE_VIEWER`? | Grant succeeds from Terraform; then `cost_access.sql` moves into Terraform |
 | S9 | The dbt query-tag macro on dbt-snowflake | Model queries show `mpo_dbt_node` in `QUERY_HISTORY` |
-| S10 | mpo_ops's managed identity queries the Eventhouse with workspace Viewer; the eventstream table matches `capacity_operations.kql` | The cost job reads operations; else adapt the function or grant |
+| S10 | mpo_ops's managed identity queries the Eventhouse with workspace Viewer; the eventstream table matches `capacity_operations.kql`; note what `identityValue` holds for a managed identity | The cost job reads operations; then the item + time fallback can also require the domain's identity, so manual runs of the same item are not charged to the asset |
 | S11 | Purview: which role may create the two type definitions, and Data Curator on a collection lets mpo_ops upsert entities | `typedefs` by an admin and a `sync` run succeed |
 
 ## 11. Delivery

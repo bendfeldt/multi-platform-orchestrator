@@ -31,6 +31,7 @@ from dagster._core.events import DagsterEventType
 from dagster._core.storage.dagster_run import DagsterRun, DagsterRunStatus, RunRecord, RunsFilter
 
 from orchestrator_core import log_ingestion
+from orchestrator_core.alerts import run_location
 from orchestrator_core.components import DATABRICKS_RUN_ID
 from orchestrator_core.query_tag import PREFIX, parse_query_tag
 from orchestrator_core.resources.databricks import DatabricksResource
@@ -44,7 +45,6 @@ CU_HOUR_PRICE_ENV = "FABRIC_CU_HOUR_PRICE_USD"
 # What FabricItemJob / FabricSemanticModelRefresh record (components.py).
 FABRIC_OPERATION_KEYS = ("fabric_job_instance_id", "refresh_request_id")
 _GUID = re.compile(r"^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
-LOCATION_TAG = "dagster/code_location"
 _FINISHED = [DagsterRunStatus.SUCCESS, DagsterRunStatus.FAILURE, DagsterRunStatus.CANCELED]
 
 # Queries start before the run finishes, possibly the day before.
@@ -235,11 +235,6 @@ def finished_runs(instance: dg.DagsterInstance, start: datetime, end: datetime) 
         for r in records
         if r.end_time is not None and start.timestamp() <= r.end_time < end.timestamp()
     ]
-
-
-def run_location(run: DagsterRun) -> str | None:
-    origin = run.remote_job_origin
-    return run.tags.get(LOCATION_TAG) or (origin.location_name if origin else None)
 
 
 def materializations(

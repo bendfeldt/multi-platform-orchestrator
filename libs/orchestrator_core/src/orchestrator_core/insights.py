@@ -12,12 +12,12 @@ from typing import Any
 import dagster as dg
 from dagster._core.definitions.freshness import FreshnessState, FreshnessStateChange
 from dagster._core.events import DagsterEventType
-from dagster._core.storage.dagster_run import DagsterRunStatus, RunsFilter
+from dagster._core.storage.dagster_run import DagsterRunStatus
 
 from orchestrator_core import log_ingestion
-from orchestrator_core.cost import DAILY, LOCATION_TAG, _day_bounds
+from orchestrator_core.alerts import run_location
+from orchestrator_core.cost import DAILY, _day_bounds, finished_runs
 
-_FINISHED = [DagsterRunStatus.SUCCESS, DagsterRunStatus.FAILURE, DagsterRunStatus.CANCELED]
 _BATCH = 1000
 
 
@@ -31,17 +31,10 @@ def percentile(values: Sequence[float], q: float) -> float | None:
 
 
 def job_rows(instance: dg.DagsterInstance, day: date, start: datetime, end: datetime) -> list[dict]:
-    records = instance.get_run_records(
-        RunsFilter(statuses=_FINISHED, updated_after=start - timedelta(seconds=1))
-    )
     by_job: dict[tuple[str, str], list] = defaultdict(list)
-    for record in records:
-        if record.end_time is None or not start.timestamp() <= record.end_time < end.timestamp():
-            continue
+    for record in finished_runs(instance, start, end):
         run = record.dagster_run
-        origin = run.remote_job_origin
-        location = run.tags.get(LOCATION_TAG) or (origin.location_name if origin else "") or ""
-        by_job[(location, run.job_name)].append(record)
+        by_job[(run_location(run) or "", run.job_name)].append(record)
 
     rows = []
     for (location, job), runs in sorted(by_job.items()):

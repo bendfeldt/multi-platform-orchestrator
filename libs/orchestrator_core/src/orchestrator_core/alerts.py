@@ -17,6 +17,7 @@ import dagster as dg
 from dagster._core.definitions.freshness import FreshnessState, FreshnessStateChange
 from dagster._core.events import DagsterEventType
 from dagster._core.events.log import EventLogEntry
+from dagster._core.storage.dagster_run import DagsterRun
 
 from orchestrator_core.run_coordinator import LAUNCHED_BY_TAG
 
@@ -35,9 +36,15 @@ def ui_url(path: str) -> str | None:
     return f"{base.rstrip('/')}{path}" if base else None
 
 
+def run_location(run: DagsterRun) -> str | None:
+    """The code location a run belongs to (alerts, cost and insights all use this)."""
+    origin = run.remote_job_origin
+    return run.tags.get(_LOCATION_TAG) or (origin.location_name if origin else None)
+
+
 def _run_location(instance: dg.DagsterInstance, run_id: str | None) -> str | None:
     run = instance.get_run_by_id(run_id) if run_id else None
-    return run.tags.get(_LOCATION_TAG) if run else None
+    return run_location(run) if run else None
 
 
 @dg.run_failure_sensor(
@@ -47,11 +54,10 @@ def _run_location(instance: dg.DagsterInstance, run_id: str | None) -> str | Non
 )
 def run_failure_alerts(context: dg.RunFailureSensorContext) -> None:
     run = context.dagster_run
-    origin = run.remote_job_origin
     emit(
         "run_failure",
         severity="error",
-        location=run.tags.get(_LOCATION_TAG) or (origin.location_name if origin else None),
+        location=run_location(run),
         job=run.job_name,
         run_id=run.run_id,
         launched_by=run.tags.get(LAUNCHED_BY_TAG),
