@@ -1,7 +1,7 @@
 # Security
 
 For security reviews and vendor questionnaires. Every statement points at the code or test
-that makes it true; the infra repo is `multi-platform-orchestrator-infra`. Items not yet
+that makes it true; the infra repo is `multi-platform-orchestrator-iac`. Items not yet
 verified against Azure are listed in docs/PRO_FEATURES_PLAN.md §10 and the infra README.
 
 ## Architecture and data flows

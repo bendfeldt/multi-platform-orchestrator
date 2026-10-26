@@ -127,7 +127,7 @@ Infrastructure and solution change at different speeds, are owned by different r
 different permissions. They are split into **two repositories with a versioned contract** between
 them. Neither imports code from the other.
 
-| | `multi-platform-orchestrator-infra` (new repo) | `multi-platform-orchestrator` (this repo) |
+| | `multi-platform-orchestrator-iac` (new repo) | `multi-platform-orchestrator` (this repo) |
 |---|---|---|
 | Contains | Terraform only | Python, Dagster definitions, Containerfiles, app deployment, local Podman stack |
 | Owns | Network, ACA environment, Postgres, ACR, storage, Front Door, monitoring, Entra groups & app registrations, managed identities, federated credentials, Azure Policy, **platform grants** (Unity Catalog, Snowflake roles, Fabric workspace roles) | Core library, components, code locations, dbt projects, images, container app + job definitions (incl. admin jobs), Dagster instance config |
@@ -538,6 +538,4 @@ Phases 1–2 need no Azure access and can start immediately.
 
 ## 12. Open items
 
-1. Create the GitHub repo `bendfeldt/multi-platform-orchestrator-infra` (this session's GitHub
-   integration may not create repositories), then move the `infra` branch there:
-   `git push <infra-repo-url> origin/infra:main` and delete the branch here.
+None. The infra code lives in `bendfeldt/multi-platform-orchestrator-iac`.
