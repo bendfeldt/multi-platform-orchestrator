@@ -25,7 +25,8 @@ verified against Azure are listed in docs/PRO_FEATURES_PLAN.md §10 and the infr
 ## No secrets
 
 - **CI/CD**: GitHub Actions and Azure DevOps log in to Azure with workload identity federation;
-  pull-request CI gets no cloud login at all (`.github/workflows/ci.yml` has no `id-token`).
+  pull-request CI gets no cloud login at all (`.github/workflows/ci.yml` and
+  `change-report.yml` have no `id-token`).
 - **Workloads**: every container uses a user-assigned managed identity; Snowflake trusts it
   through workload identity federation, Databricks, Fabric and Power BI through Entra tokens
   (`orchestrator_core/auth.py`, `resources/`).

@@ -60,6 +60,9 @@ jobs:
   test:
     needs: dev
     uses: ./.github/workflows/promote.yml
+    permissions: # what promote.yml's job asks for: its environment's federated login
+      contents: read
+      id-token: write
     with:
       environment: test
       images: ${{ needs.dev.outputs.images }}
@@ -67,6 +70,9 @@ jobs:
   prod:
     needs: [dev, test]
     uses: ./.github/workflows/promote.yml
+    permissions: # what promote.yml's job asks for: its environment's federated login
+      contents: read
+      id-token: write
     with:
       environment: prod
       images: ${{ needs.dev.outputs.images }}
