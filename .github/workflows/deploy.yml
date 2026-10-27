@@ -35,30 +35,48 @@ jobs:
     outputs:
       images: ${{ steps.push.outputs.images }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # No Azure environment yet (bootstrap not run, variables not set): skip with a notice
+      # instead of failing at login on every push. Runs as normal once AZURE_CLIENT_ID is set.
+      - id: configured
+        env:
+          CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+        run: |
+          if [ -n "$CLIENT_ID" ]; then
+            echo "ok=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "::notice::Environment dev has no AZURE_CLIENT_ID yet; nothing deployed."
+          fi
+      - if: steps.configured.outputs.ok
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - if: steps.configured.outputs.ok
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.11.32"
-      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+      - if: steps.configured.outputs.ok
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      - run: deploy/scripts/build.sh "$GITHUB_SHA"
-      - id: push
+      - if: steps.configured.outputs.ok
+        run: deploy/scripts/build.sh "$GITHUB_SHA"
+      - if: steps.configured.outputs.ok
+        id: push
         run: |
           deploy/scripts/push.sh "$ACR_LOGIN_SERVER" "$GITHUB_SHA" images.json
           echo "images=$(jq -c . images.json)" >>"$GITHUB_OUTPUT"
         env:
           ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
-      - run: deploy/scripts/deploy.sh images.json
+      - if: steps.configured.outputs.ok
+        run: deploy/scripts/deploy.sh images.json
         env:
           CONTRACT_URL: ${{ vars.CONTRACT_URL }}
 
   test:
     needs: dev
+    if: needs.dev.outputs.images != '' # dev deployed something to promote
     uses: ./.github/workflows/promote.yml
     permissions: # what promote.yml's job asks for: its environment's federated login
       contents: read
@@ -69,6 +87,7 @@ jobs:
 
   prod:
     needs: [dev, test]
+    if: needs.dev.outputs.images != ''
     uses: ./.github/workflows/promote.yml
     permissions: # what promote.yml's job asks for: its environment's federated login
       contents: read
