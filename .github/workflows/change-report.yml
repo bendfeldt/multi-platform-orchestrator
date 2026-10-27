@@ -1,0 +1,38 @@
+name: change-report
+
+# Not in ci.yml: deploy.yml calls ci.yml, and a called workflow may not ask for more than its
+# caller gives (GitHub refuses to start the run). The comment needs pull-requests: write.
+on:
+  pull_request:
+
+# Still no id-token: pull requests never get a cloud login (docs/PLAN.md §9).
+permissions:
+  contents: read
+
+jobs:
+  # What the pull request changes in the Dagster definitions, as a comment and job summary.
+  change-report:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write # the comment only
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.base_ref }}
+          path: .base
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.11.32"
+      - run: deploy/scripts/change-report.sh .base change-report.md
+      - run: cat change-report.md >> "$GITHUB_STEP_SUMMARY"
+      # Pull requests from forks get a read-only token: the summary above is their report.
+      - if: github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: deploy/scripts/pr-comment.sh "$GITHUB_REPOSITORY" "$PR" change-report.md

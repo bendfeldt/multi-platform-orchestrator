@@ -25,18 +25,33 @@ jobs:
       id-token: write
       pull-requests: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Without dev's variables there can be no previews to remove: say so and stay green
+      # instead of failing every hour.
+      - id: configured
+        env:
+          CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+        run: |
+          if [ -n "$CLIENT_ID" ]; then
+            echo "ok=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "::notice::Environment preview-cleanup has no AZURE_CLIENT_ID yet; skipped."
+          fi
+      - if: steps.configured.outputs.ok
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - if: steps.configured.outputs.ok
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.11.32"
-      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+      - if: steps.configured.outputs.ok
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      - env:
+      - if: steps.configured.outputs.ok
+        env:
           GH_TOKEN: ${{ github.token }}
           CONTRACT_URL: ${{ vars.CONTRACT_URL }}
         run: deploy/scripts/preview-cleanup.sh "$GITHUB_REPOSITORY"
